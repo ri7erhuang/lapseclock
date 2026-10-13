@@ -36,13 +36,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setInterval(sec: Int) = viewModelScope.launch { repo.setInterval(sec) }
     fun setResolution(w: Int, h: Int) = viewModelScope.launch { repo.setResolution(w, h) }
-    fun setQuality(q: Int) = viewModelScope.launch { repo.setQuality(q) }
     fun setUse24h(v: Boolean) = viewModelScope.launch { repo.setUse24h(v) }
     fun setShowSeconds(v: Boolean) = viewModelScope.launch { repo.setShowSeconds(v) }
     fun setPaused(v: Boolean) = viewModelScope.launch { repo.setPaused(v) }
     fun setAutoClean(days: Int) = viewModelScope.launch { repo.setAutoCleanDays(days) }
     fun setSoftBrightness(v: Boolean) = viewModelScope.launch { repo.setSoftBrightness(v) }
     fun setBurnShiftLevel(level: Int) = viewModelScope.launch { repo.setBurnShiftLevel(level) }
+    fun setWatermarkEnabled(v: Boolean) = viewModelScope.launch { repo.setWatermarkEnabled(v) }
+    fun setWatermarkText(v: String) = viewModelScope.launch { repo.setWatermarkText(v) }
+    fun setWatermarkShowTime(v: Boolean) = viewModelScope.launch { repo.setWatermarkShowTime(v) }
 
     override fun onCleared() {
         capture.stop()

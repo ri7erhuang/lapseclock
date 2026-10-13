@@ -1,12 +1,16 @@
 package com.lapseclock.capture
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.os.Handler
 import android.os.Looper
 import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
@@ -15,6 +19,7 @@ import com.lapseclock.isSleepHour
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.settings.SettingsRepo
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.File
 import kotlin.coroutines.resume
 
 data class CaptureStatus(
@@ -91,7 +97,7 @@ class CaptureController(
             val capture = ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setTargetResolution(Size(s.targetWidth, s.targetHeight))
-                .setJpegQuality(s.jpegQuality)
+                .setJpegQuality(JPEG_QUALITY)
                 .build()
             p.unbindAll()
             p.bindToLifecycle(
@@ -121,7 +127,6 @@ class CaptureController(
             var skippedTotal = 0
             var lastW = -1
             var lastH = -1
-            var lastQuality = -1
 
             while (isActive) {
                 val s = repo.settings.first()
@@ -156,14 +161,11 @@ class CaptureController(
                     continue
                 }
 
-                if (s.targetWidth != lastW || s.targetHeight != lastH ||
-                    s.jpegQuality != lastQuality
-                ) {
+                if (s.targetWidth != lastW || s.targetHeight != lastH) {
                     val o = owner
                     if (o != null) {
                         lastW = s.targetWidth
                         lastH = s.targetHeight
-                        lastQuality = s.jpegQuality
                         bindInternal(o)
                         continue
                     }
@@ -219,8 +221,25 @@ class CaptureController(
         val ic = imageCapture ?: return false
         _status.value = _status.value.copy(capturing = true)
         val file = store.newFile()
+        val ok = if (s.watermarkEnabled && (s.watermarkText.isNotBlank() || s.watermarkShowTime)) {
+            shootWithWatermark(ic, file, s)
+        } else {
+            shootPlain(ic, file)
+        }
+        _status.value = _status.value.copy(
+            capturing = false,
+            lastShotAt = System.currentTimeMillis(),
+            lastError = if (ok) null else _status.value.lastError,
+        )
+        if (ok && s.autoCleanDays > 0) {
+            scope.launch { store.deleteOlderThan(s.autoCleanDays) }
+        }
+        return ok
+    }
+
+    private suspend fun shootPlain(ic: ImageCapture, file: File): Boolean {
         val options = ImageCapture.OutputFileOptions.Builder(file).build()
-        val result = suspendCancellableCoroutine { cont ->
+        return suspendCancellableCoroutine { cont ->
             try {
                 ic.takePicture(options, executor, object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(output: ImageCapture.OutputFileResults) {
@@ -237,15 +256,67 @@ class CaptureController(
                 if (cont.isActive) cont.resume(false)
             }
         }
-        _status.value = _status.value.copy(
-            capturing = false,
-            lastShotAt = System.currentTimeMillis(),
-            lastError = if (result) null else _status.value.lastError,
-        )
-        if (result && s.autoCleanDays > 0) {
-            scope.launch { store.deleteOlderThan(s.autoCleanDays) }
+    }
+
+    private suspend fun shootWithWatermark(ic: ImageCapture, file: File, s: AppSettings): Boolean =
+        suspendCancellableCoroutine { cont ->
+            try {
+                ic.takePicture(executor, object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(image: ImageProxy) {
+                        // 回调在主线程，重活切后台
+                        scope.launch(Dispatchers.Default) {
+                            val ok = try {
+                                saveWatermarked(image, file, s)
+                            } catch (t: Throwable) {
+                                _status.value = _status.value.copy(lastError = t.message)
+                                false
+                            } finally {
+                                image.close()
+                            }
+                            if (cont.isActive) cont.resume(ok)
+                        }
+                    }
+
+                    override fun onError(e: ImageCaptureException) {
+                        _status.value = _status.value.copy(lastError = e.message)
+                        if (cont.isActive) cont.resume(false)
+                    }
+                })
+            } catch (t: Throwable) {
+                _status.value = _status.value.copy(lastError = t.message)
+                if (cont.isActive) cont.resume(false)
+            }
         }
-        return result
+
+    /** 已在 Dispatchers.Default 上调用 */
+    private fun saveWatermarked(image: ImageProxy, file: File, s: AppSettings): Boolean {
+        val buffer = image.planes[0].buffer
+        buffer.rewind()
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+
+        var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return false
+
+        val rotation = image.imageInfo.rotationDegrees
+        if (rotation != 0) {
+            val m = Matrix().apply { postRotate(rotation.toFloat()) }
+            val rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+            if (rotated != bmp) bmp.recycle()
+            bmp = rotated
+        } else if (!bmp.isMutable) {
+            // Canvas 需要可变位图；旋转分支 createBitmap 已保证可变
+            val mutable = bmp.copy(Bitmap.Config.ARGB_8888, true)
+            bmp.recycle()
+            bmp = mutable
+        }
+
+        Watermark.draw(bmp, s.watermarkText, s.watermarkShowTime)
+
+        file.outputStream().use { out ->
+            bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+        }
+        bmp.recycle()
+        return true
     }
 
     private fun refreshCounts() {
@@ -259,4 +330,8 @@ class CaptureController(
         suspendCancellableCoroutine { cont ->
             f.addListener({ if (cont.isActive) cont.resume(f.get()) }, executor)
         }
+
+    companion object {
+        private const val JPEG_QUALITY = 100
+    }
 }

@@ -19,7 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Slider
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -47,13 +48,15 @@ fun SettingsSheet(
     onDismiss: () -> Unit,
     onSetInterval: (Int) -> Unit,
     onSetResolution: (Int, Int) -> Unit,
-    onSetQuality: (Int) -> Unit,
     onSetUse24h: (Boolean) -> Unit,
     onSetShowSeconds: (Boolean) -> Unit,
     onSetPaused: (Boolean) -> Unit,
     onSetAutoClean: (Int) -> Unit,
     onSetSoftBrightness: (Boolean) -> Unit,
     onSetBurnShiftLevel: (Int) -> Unit,
+    onSetWatermarkEnabled: (Boolean) -> Unit,
+    onSetWatermarkText: (String) -> Unit,
+    onSetWatermarkShowTime: (Boolean) -> Unit,
 ) {
     val stats = remember { runCatching {
         Triple(store.countToday(), store.totalCount(), store.totalBytes())
@@ -102,15 +105,6 @@ fun SettingsSheet(
                 onSelect = { onSetResolution(it.first, it.second) },
             )
 
-            SectionTitle("JPEG 画质  ${settings.jpegQuality}")
-            Slider(
-                value = settings.jpegQuality.toFloat(),
-                onValueChange = { onSetQuality(it.toInt()) },
-                valueRange = 40f..95f,
-                steps = 10,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
             SectionTitle("时钟")
             SwitchRow("24 小时制", settings.use24h, onSetUse24h)
             SwitchRow("显示秒数", settings.showSeconds, onSetShowSeconds)
@@ -143,6 +137,32 @@ fun SettingsSheet(
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
             )
+
+            SectionTitle("水印")
+            SwitchRow("照片与视频带水印", settings.watermarkEnabled, onSetWatermarkEnabled)
+            if (settings.watermarkEnabled) {
+                OutlinedTextField(
+                    value = settings.watermarkText,
+                    onValueChange = onSetWatermarkText,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("水印文字", color = panelDim, fontSize = 12.sp) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = panelText,
+                        unfocusedTextColor = panelText,
+                        cursorColor = panelAccent,
+                        focusedBorderColor = panelAccent,
+                        unfocusedBorderColor = Color(0xFF333333),
+                    ),
+                )
+                SwitchRow("附加拍摄时间", settings.watermarkShowTime, onSetWatermarkShowTime)
+                Text(
+                    text = "水印在拍照时烧进 JPEG，导出的延时视频会自动带上。开启后照片会多一次压缩（画质已自动补偿）。",
+                    color = panelDim,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                )
+            }
 
             SectionTitle("自动清理")
             OptionRow(
