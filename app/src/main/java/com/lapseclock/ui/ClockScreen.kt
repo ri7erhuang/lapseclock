@@ -47,6 +47,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lapseclock.calendar.dayInfoOf
 import com.lapseclock.capture.CaptureStatus
 import com.lapseclock.isSleepHour
 import com.lapseclock.settings.AppSettings
@@ -170,6 +171,11 @@ fun ClockScreen(
         )
 
         if (!sleeping) {
+            WeatherPanel(
+                mainColor = mainColor,
+                modifier = Modifier.align(Alignment.TopStart),
+            )
+
             Column(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -269,9 +275,22 @@ private fun ClockFace(
                 fontWeight = FontWeight.Thin,
                 letterSpacing = 2.sp,
             )
-            val dateFmt = DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINA)
+            val dayInfo = remember(now.toLocalDate()) { dayInfoOf(now.toLocalDate()) }
+            val dateFmt = DateTimeFormatter.ofPattern("M月d日", Locale.CHINA)
+            val weekdayFmt = DateTimeFormatter.ofPattern("EEEE", Locale.CHINA)
             Text(
-                text = now.format(dateFmt),
+                text = buildAnnotatedString {
+                    append(now.format(dateFmt))
+                    withStyle(SpanStyle(color = Color(0xFF6F6F6F))) {
+                        append(" ${dayInfo.lunarText}")
+                    }
+                    append(" ${now.format(weekdayFmt)}")
+                    dayInfo.specialText?.let {
+                        withStyle(SpanStyle(color = Color(0xFFFFC857))) {
+                            append(" $it")
+                        }
+                    }
+                },
                 color = clockDim,
                 fontSize = bigSize * 0.13f,
                 fontWeight = FontWeight.Light,

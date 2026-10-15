@@ -69,6 +69,7 @@ dependencies {
 
     implementation("androidx.datastore:datastore-preferences:1.0.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("cn.6tail:lunar:1.7.7")
 
     val camerax = "1.3.1"
     implementation("androidx.camera:camera-core:$camerax")

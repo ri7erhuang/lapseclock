@@ -14,9 +14,9 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "lapseclock_settings")
 
 data class AppSettings(
-    val intervalSec: Int = 10,
-    val targetWidth: Int = 1280,
-    val targetHeight: Int = 720,
+    val intervalSec: Int = 60,
+    val targetWidth: Int = 1600,
+    val targetHeight: Int = 1200,
     val use24h: Boolean = true,
     val showSeconds: Boolean = true,
     val paused: Boolean = false,
@@ -49,9 +49,9 @@ class SettingsRepo(private val context: Context) {
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
         AppSettings(
-            intervalSec = p[Keys.INTERVAL] ?: 10,
-            targetWidth = p[Keys.WIDTH] ?: 1280,
-            targetHeight = p[Keys.HEIGHT] ?: 720,
+            intervalSec = p[Keys.INTERVAL] ?: 60,
+            targetWidth = p[Keys.WIDTH] ?: 1600,
+            targetHeight = p[Keys.HEIGHT] ?: 1200,
             use24h = p[Keys.USE_24H] ?: true,
             showSeconds = p[Keys.SHOW_SECONDS] ?: true,
             paused = p[Keys.PAUSED] ?: false,
