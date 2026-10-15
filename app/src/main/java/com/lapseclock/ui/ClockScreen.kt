@@ -114,7 +114,7 @@ fun ClockScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     LaunchedEffect(lastInteraction) {
         controlsVisible = true
-        delay(3000)
+        delay(10_000)
         controlsVisible = false
     }
 
