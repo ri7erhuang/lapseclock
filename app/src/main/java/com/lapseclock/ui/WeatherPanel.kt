@@ -1,12 +1,17 @@
 package com.lapseclock.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Umbrella
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,22 +27,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lapseclock.weather.WeatherUi
 import kotlinx.coroutines.delay
 
-/** 占位内容，数据源接入后替换 */
-private const val PLACEHOLDER_TEXT = "多云 26°"
-
 private val WEATHER_ACCENT = Color(0xFF9EC8E3)
+private val WEATHER_SUN = Color(0xFFFFC857)
 
 /**
- * 左上角天气面板（占位数据）。
+ * 左上角天气面板。
  * 防烧屏运动：每 2 分钟水平平移 10dp，右移至面板右缘到达屏幕中线后掉头，
  * 左移回初始位置后再掉头，往复如三角波；垂直方向不动。
  */
 @Composable
 fun WeatherPanel(
+    weather: WeatherUi,
     mainColor: Color,
     modifier: Modifier = Modifier,
 ) {
@@ -77,9 +83,31 @@ fun WeatherPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Canvas(modifier = Modifier.size(8.dp)) { drawCircle(color = WEATHER_ACCENT) }
-                Text(text = PLACEHOLDER_TEXT, color = mainColor, fontSize = 12.sp)
+                Text(
+                    text = weather.city,
+                    color = mainColor,
+                    fontSize = 12.sp,
+                )
+                val sunny = weather.icon == "100" || weather.icon == "150"
+                Icon(
+                    imageVector = iconFor(weather.icon),
+                    contentDescription = weather.text,
+                    tint = if (sunny) WEATHER_SUN else WEATHER_ACCENT,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = "${weather.text} ${weather.temp}°",
+                    color = mainColor,
+                    fontSize = 12.sp,
+                )
             }
         }
     }
+}
+
+private fun iconFor(code: String) = when {
+    code == "100" || code == "150" -> Icons.Filled.WbSunny
+    code.startsWith("4") -> Icons.Filled.AcUnit
+    code.startsWith("3") || code.startsWith("2") -> Icons.Filled.Umbrella
+    else -> Icons.Filled.Cloud
 }

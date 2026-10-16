@@ -51,6 +51,7 @@ import com.lapseclock.calendar.dayInfoOf
 import com.lapseclock.capture.CaptureStatus
 import com.lapseclock.isSleepHour
 import com.lapseclock.settings.AppSettings
+import com.lapseclock.weather.WeatherUi
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -89,6 +90,7 @@ fun ClockScreen(
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenExport: () -> Unit,
+    weather: WeatherUi?,
     modifier: Modifier = Modifier,
 ) {
     var now by remember { mutableStateOf(LocalDateTime.now()) }
@@ -171,10 +173,13 @@ fun ClockScreen(
         )
 
         if (!sleeping) {
-            WeatherPanel(
-                mainColor = mainColor,
-                modifier = Modifier.align(Alignment.TopStart),
-            )
+            weather?.let {
+                WeatherPanel(
+                    weather = it,
+                    mainColor = mainColor,
+                    modifier = Modifier.align(Alignment.TopStart),
+                )
+            }
 
             Column(
                 modifier = Modifier

@@ -28,6 +28,11 @@ class MainActivity : ComponentActivity() {
             if (granted) startCapture() else vm.permissionNeeded.value = true
         }
 
+    private val locationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            if (grants.values.any { it }) vm.refreshWeatherNow()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -38,12 +43,19 @@ class MainActivity : ComponentActivity() {
             cameraPermission.launch(Manifest.permission.CAMERA)
         }
 
+        if (vm.settings.value.useLocation && !hasLocationPermission()) {
+            locationPermission.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            )
+        }
+
         setContent {
             val settings by vm.settings.collectAsState()
             val screen by vm.screen.collectAsState()
             val permissionNeeded by vm.permissionNeeded.collectAsState()
             val status by vm.capture.status.collectAsState()
             val exportState by vm.export.state.collectAsState()
+            val weather by vm.weather.collectAsState()
 
             LapseApp(
                 screen = screen,
@@ -51,6 +63,7 @@ class MainActivity : ComponentActivity() {
                 status = status,
                 permissionNeeded = permissionNeeded,
                 exportState = exportState,
+                weather = weather,
                 onRequestPermission = { cameraPermission.launch(Manifest.permission.CAMERA) },
                 onOpenSettings = { vm.screen.value = Screen.Settings },
                 onOpenExport = { vm.screen.value = Screen.Export },
@@ -66,6 +79,8 @@ class MainActivity : ComponentActivity() {
                 onSetWatermarkEnabled = { vm.setWatermarkEnabled(it) },
                 onSetWatermarkText = { vm.setWatermarkText(it) },
                 onSetWatermarkShowTime = { vm.setWatermarkShowTime(it) },
+                onSetWeatherCity = { vm.setWeatherCity(it) },
+                onSetUseLocation = { vm.setUseLocation(it) },
                 store = vm.store,
                 onStartExport = { from, to, fps, w, h -> vm.export.start(from, to, fps, w, h) },
                 onCancelExport = { vm.export.cancel() },
@@ -97,6 +112,12 @@ class MainActivity : ComponentActivity() {
 
     private fun hasCameraPermission() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun hasLocationPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
     private fun startCapture() {

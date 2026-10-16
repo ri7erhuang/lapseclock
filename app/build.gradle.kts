@@ -1,7 +1,19 @@
+import java.io.InputStreamReader
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use {
+        InputStreamReader(it, Charsets.UTF_8).use { reader -> load(reader) }
+    }
+}
+
+fun localProp(name: String): String = localProps.getProperty(name, "").trim()
 
 android {
     namespace = "com.lapseclock"
@@ -13,6 +25,10 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+
+        buildConfigField("String", "QWEATHER_KEY", "\"${localProp("qweatherKey")}\"")
+        buildConfigField("String", "QWEATHER_HOST", "\"${localProp("qweatherHost")}\"")
+        buildConfigField("String", "QWEATHER_CITY", "\"${localProp("qweatherCity")}\"")
     }
 
     buildTypes {
@@ -28,6 +44,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {

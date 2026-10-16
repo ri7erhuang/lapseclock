@@ -1,6 +1,8 @@
 package com.lapseclock
 
 import android.app.Application
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lapseclock.capture.CaptureController
@@ -8,10 +10,19 @@ import com.lapseclock.capture.PhotoStore
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.settings.SettingsRepo
 import com.lapseclock.video.ExportController
+import com.lapseclock.weather.LocationProvider
+import com.lapseclock.weather.WeatherRepo
+import com.lapseclock.weather.WeatherUi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import android.os.Environment
 
 enum class Screen { Clock, Settings, Export }
@@ -34,6 +45,69 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val screen = MutableStateFlow(Screen.Clock)
     val permissionNeeded = MutableStateFlow(false)
 
+    val weather = MutableStateFlow<WeatherUi?>(null)
+    private val weatherRepo = WeatherRepo()
+    private val locationProvider = LocationProvider(app)
+    private val weatherMutex = Mutex()
+
+    init {
+        // 启动即拉取；定位开关/手动城市（输入停止 0.8s 后）变化时重新拉取
+        viewModelScope.launch {
+            settings
+                .map { it.useLocation to it.weatherCity.trim() }
+                .debounce(800L)
+                .distinctUntilChanged()
+                .collect { refreshWeather() }
+        }
+        // 常规刷新：每 30 分钟
+        viewModelScope.launch {
+            while (true) {
+                delay(30 * 60_000L)
+                refreshWeather()
+            }
+        }
+    }
+
+    fun refreshWeatherNow() = viewModelScope.launch { refreshWeather() }
+
+    private suspend fun refreshWeather() {
+        val s = settings.value
+        val fallbackCity = s.weatherCity.trim()
+        weatherMutex.withLock {
+            var result: WeatherUi? = null
+
+            if (s.useLocation && hasLocationPermission()) {
+                val coords = runCatching { locationProvider.getLocation() }
+                    .onFailure { android.util.Log.w("LapseClock", "定位失败: ${it.message}") }
+                    .getOrNull()
+                if (coords != null) {
+                    result = runCatching { weatherRepo.fetchByCoords(coords.first, coords.second) }
+                        .onFailure { android.util.Log.w("LapseClock", "坐标天气失败: ${it.message}") }
+                        .getOrNull()
+                }
+            }
+
+            if (result == null && fallbackCity.isNotBlank()) {
+                result = runCatching { weatherRepo.fetch(fallbackCity) }
+                    .onFailure { android.util.Log.w("LapseClock", "城市天气失败: ${it.javaClass.simpleName} ${it.message}") }
+                    .getOrNull()
+            }
+
+            if (result != null) {
+                weather.value = result
+                android.util.Log.i("LapseClock", "天气刷新成功: ${result.city} ${result.text} ${result.temp}°")
+            }
+        }
+    }
+
+    private fun hasLocationPermission(): Boolean {
+        val ctx = getApplication<Application>()
+        return ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
     fun setInterval(sec: Int) = viewModelScope.launch { repo.setInterval(sec) }
     fun setResolution(w: Int, h: Int) = viewModelScope.launch { repo.setResolution(w, h) }
     fun setUse24h(v: Boolean) = viewModelScope.launch { repo.setUse24h(v) }
@@ -45,6 +119,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setWatermarkEnabled(v: Boolean) = viewModelScope.launch { repo.setWatermarkEnabled(v) }
     fun setWatermarkText(v: String) = viewModelScope.launch { repo.setWatermarkText(v) }
     fun setWatermarkShowTime(v: Boolean) = viewModelScope.launch { repo.setWatermarkShowTime(v) }
+    fun setWeatherCity(city: String) = viewModelScope.launch { repo.setWeatherCity(city) }
+    fun setUseLocation(v: Boolean) = viewModelScope.launch { repo.setUseLocation(v) }
 
     override fun onCleared() {
         capture.stop()

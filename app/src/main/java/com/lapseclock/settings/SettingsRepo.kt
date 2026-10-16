@@ -1,6 +1,7 @@
 package com.lapseclock.settings
 
 import android.content.Context
+import com.lapseclock.BuildConfig
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -26,6 +27,8 @@ data class AppSettings(
     val watermarkEnabled: Boolean = true,
     val watermarkText: String = "LapseClock",
     val watermarkShowTime: Boolean = true,
+    val weatherCity: String = BuildConfig.QWEATHER_CITY,
+    val useLocation: Boolean = true,
 ) {
     val targetLabel: String get() = "${targetWidth}×${targetHeight}"
 }
@@ -45,6 +48,8 @@ class SettingsRepo(private val context: Context) {
         val WATERMARK_ENABLED = booleanPreferencesKey("watermark_enabled")
         val WATERMARK_TEXT = stringPreferencesKey("watermark_text")
         val WATERMARK_SHOW_TIME = booleanPreferencesKey("watermark_show_time")
+        val WEATHER_CITY = stringPreferencesKey("weather_city")
+        val USE_LOCATION = booleanPreferencesKey("use_location")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -61,6 +66,8 @@ class SettingsRepo(private val context: Context) {
             watermarkEnabled = p[Keys.WATERMARK_ENABLED] ?: true,
             watermarkText = p[Keys.WATERMARK_TEXT] ?: "LapseClock",
             watermarkShowTime = p[Keys.WATERMARK_SHOW_TIME] ?: true,
+            weatherCity = p[Keys.WEATHER_CITY] ?: BuildConfig.QWEATHER_CITY,
+            useLocation = p[Keys.USE_LOCATION] ?: true,
         )
     }
 
@@ -78,4 +85,6 @@ class SettingsRepo(private val context: Context) {
     suspend fun setWatermarkEnabled(v: Boolean) = context.dataStore.edit { it[Keys.WATERMARK_ENABLED] = v }
     suspend fun setWatermarkText(v: String) = context.dataStore.edit { it[Keys.WATERMARK_TEXT] = v }
     suspend fun setWatermarkShowTime(v: Boolean) = context.dataStore.edit { it[Keys.WATERMARK_SHOW_TIME] = v }
+    suspend fun setWeatherCity(city: String) = context.dataStore.edit { it[Keys.WEATHER_CITY] = city }
+    suspend fun setUseLocation(v: Boolean) = context.dataStore.edit { it[Keys.USE_LOCATION] = v }
 }

@@ -57,6 +57,8 @@ fun SettingsSheet(
     onSetWatermarkEnabled: (Boolean) -> Unit,
     onSetWatermarkText: (String) -> Unit,
     onSetWatermarkShowTime: (Boolean) -> Unit,
+    onSetWeatherCity: (String) -> Unit,
+    onSetUseLocation: (Boolean) -> Unit,
 ) {
     val stats = remember { runCatching {
         Triple(store.countToday(), store.totalCount(), store.totalBytes())
@@ -163,6 +165,35 @@ fun SettingsSheet(
                     lineHeight = 18.sp,
                 )
             }
+
+            SectionTitle("天气")
+            SwitchRow("自动定位城市", settings.useLocation, onSetUseLocation)
+            if (!settings.useLocation) {
+                OutlinedTextField(
+                    value = settings.weatherCity,
+                    onValueChange = onSetWeatherCity,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("城市名（如 西安）", color = panelDim, fontSize = 12.sp) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = panelText,
+                        unfocusedTextColor = panelText,
+                        cursorColor = panelAccent,
+                        focusedBorderColor = panelAccent,
+                        unfocusedBorderColor = Color(0xFF333333),
+                    ),
+                )
+            }
+            Text(
+                text = if (settings.useLocation) {
+                    "根据定位自动获取所在城市；定位失败或未授权时使用备用城市。"
+                } else {
+                    "定位关闭，按城市名查询；留空则隐藏天气面板。"
+                },
+                color = panelDim,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+            )
 
             SectionTitle("自动清理")
             OptionRow(

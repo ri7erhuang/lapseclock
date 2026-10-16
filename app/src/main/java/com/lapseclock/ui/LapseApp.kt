@@ -12,6 +12,7 @@ import com.lapseclock.capture.CaptureStatus
 import com.lapseclock.capture.PhotoStore
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.video.ExportState
+import com.lapseclock.weather.WeatherUi
 import java.time.LocalDate
 
 @Composable
@@ -21,6 +22,7 @@ fun LapseApp(
     status: CaptureStatus,
     permissionNeeded: Boolean,
     exportState: ExportState,
+    weather: WeatherUi?,
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenExport: () -> Unit,
@@ -36,6 +38,8 @@ fun LapseApp(
     onSetWatermarkEnabled: (Boolean) -> Unit,
     onSetWatermarkText: (String) -> Unit,
     onSetWatermarkShowTime: (Boolean) -> Unit,
+    onSetWeatherCity: (String) -> Unit,
+    onSetUseLocation: (Boolean) -> Unit,
     store: PhotoStore,
     onStartExport: (LocalDate, LocalDate, Int, Int, Int) -> Unit,
     onCancelExport: () -> Unit,
@@ -55,6 +59,7 @@ fun LapseApp(
             onRequestPermission = onRequestPermission,
             onOpenSettings = onOpenSettings,
             onOpenExport = onOpenExport,
+            weather = weather,
         )
 
         when (screen) {
@@ -73,6 +78,8 @@ fun LapseApp(
                 onSetWatermarkEnabled = onSetWatermarkEnabled,
                 onSetWatermarkText = onSetWatermarkText,
                 onSetWatermarkShowTime = onSetWatermarkShowTime,
+                onSetWeatherCity = onSetWeatherCity,
+                onSetUseLocation = onSetUseLocation,
             )
 
             Screen.Export -> ExportScreen(
