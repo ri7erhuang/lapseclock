@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.coroutines.resume
 
@@ -59,7 +60,6 @@ class CaptureController(
     private var provider: ProcessCameraProvider? = null
     private var imageCapture: ImageCapture? = null
     private var loopJob: Job? = null
-    private var bindJob: Job? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = ContextCompat.getMainExecutor(appContext)
@@ -67,18 +67,15 @@ class CaptureController(
     @Volatile
     private var owner: LifecycleOwner? = null
 
+    /** 按需绑定：相机只在拍前短暂打开，拍完即释放（省电） */
     suspend fun start(owner: LifecycleOwner) {
         this.owner = owner
-        if (loopJob?.isActive == true && provider != null) return
-        bindJob?.cancel()
-        bindJob = scope.launch { bindInternal(owner) }
         if (loopJob?.isActive != true) startLoop()
     }
 
     fun stop() {
         loopJob?.cancel()
         loopJob = null
-        bindJob?.cancel()
         mainHandler.post {
             try {
                 provider?.unbindAll()
@@ -118,6 +115,18 @@ class CaptureController(
         }
     }
 
+    private suspend fun unbindInternal() {
+        if (imageCapture == null && provider == null) return
+        withContext(Dispatchers.Main) {
+            try {
+                provider?.unbindAll()
+            } catch (_: Exception) {
+            }
+            imageCapture = null
+            _status.value = _status.value.copy(bound = false)
+        }
+    }
+
     private fun startLoop() {
         loopJob?.cancel()
         loopJob = scope.launch {
@@ -133,6 +142,7 @@ class CaptureController(
 
                 if (isSleepHour(java.time.LocalTime.now().hour)) {
                     _status.value = _status.value.copy(loopActive = false, sleeping = true)
+                    unbindInternal()
                     t0 = 0L
                     delay(1000)
                     continue
@@ -142,6 +152,7 @@ class CaptureController(
 
                 if (s.paused) {
                     _status.value = _status.value.copy(loopActive = false)
+                    unbindInternal()
                     t0 = 0L
                     delay(400)
                     continue
@@ -153,20 +164,20 @@ class CaptureController(
                     lastInterval = intervalMs
                 }
 
-                val ic = imageCapture
-                if (ic == null) {
-                    _status.value = _status.value.copy(loopActive = false)
-                    t0 = 0L
-                    delay(500)
-                    continue
+                // 分辨率变化：释放旧绑定，拍前用新分辨率重绑
+                if (s.targetWidth != lastW || s.targetHeight != lastH) {
+                    lastW = s.targetWidth
+                    lastH = s.targetHeight
+                    if (imageCapture != null) unbindInternal()
                 }
 
-                if (s.targetWidth != lastW || s.targetHeight != lastH) {
-                    val o = owner
-                    if (o != null) {
-                        lastW = s.targetWidth
-                        lastH = s.targetHeight
-                        bindInternal(o)
+                // 拍前按需绑定
+                if (imageCapture == null) {
+                    owner?.let { bindInternal(it) }
+                    if (imageCapture == null) {
+                        _status.value = _status.value.copy(loopActive = false)
+                        t0 = 0L
+                        delay(1000)
                         continue
                     }
                 }
@@ -212,6 +223,9 @@ class CaptureController(
                 }
 
                 if (!ok) delay(intervalMs.coerceAtMost(3000L))
+
+                // 长间隔拍完即释放相机，空闲期不占 sensor
+                if (intervalMs >= IDLE_UNBIND_MS) unbindInternal()
             }
         }
     }
@@ -333,5 +347,8 @@ class CaptureController(
 
     companion object {
         private const val JPEG_QUALITY = 100
+
+        /** 间隔不小于该值时，拍完即 unbind 释放相机 */
+        private const val IDLE_UNBIND_MS = 30_000L
     }
 }

@@ -64,11 +64,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 .distinctUntilChanged()
                 .collect { refreshWeather() }
         }
-        // 常规刷新：每 30 分钟
+        // 常规刷新：每 5 分钟（休眠时段不刷新）
         viewModelScope.launch {
             while (true) {
-                delay(30 * 60_000L)
-                refreshWeather()
+                delay(REFRESH_INTERVAL_MS)
+                if (!isSleepHour(java.time.LocalTime.now().hour)) refreshWeather()
             }
         }
     }
@@ -78,11 +78,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val gold = MutableStateFlow<GoldUi?>(null)
 
     init {
-        // 积存金：每 30 秒
+        // 积存金：每 5 分钟（休眠时段不刷新）
         viewModelScope.launch {
             while (true) {
-                refreshGold()
-                delay(30_000L)
+                if (!isSleepHour(java.time.LocalTime.now().hour)) refreshGold()
+                delay(REFRESH_INTERVAL_MS)
             }
         }
     }
@@ -163,5 +163,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         capture.stop()
         export.cancel()
+    }
+
+    companion object {
+        /** 天气/积存金常规刷新间隔 */
+        private const val REFRESH_INTERVAL_MS = 5 * 60_000L
     }
 }

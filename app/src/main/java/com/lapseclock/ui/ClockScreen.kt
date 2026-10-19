@@ -96,15 +96,19 @@ fun ClockScreen(
     modifier: Modifier = Modifier,
 ) {
     var now by remember { mutableStateOf(LocalDateTime.now()) }
-    val tickMs = if (settings.showSeconds) 200L else 1000L
-    LaunchedEffect(settings.showSeconds) {
+    val sleeping = isSleepHour(now.hour)
+    val tickMs = when {
+        sleeping -> 1000L
+        settings.showSeconds -> 200L
+        else -> 1000L
+    }
+    LaunchedEffect(settings.showSeconds, sleeping) {
         while (true) {
             now = LocalDateTime.now()
             delay(tickMs)
         }
     }
 
-    val sleeping = isSleepHour(now.hour)
     var sleepPeek by remember { mutableStateOf(false) }
     LaunchedEffect(sleeping, sleepPeek) {
         if (!sleeping) {
@@ -133,17 +137,19 @@ fun ClockScreen(
     val (shiftX, shiftY) = antiBurnOffset(shiftSeed, settings.burnShiftLevel)
 
     var colonAlpha by remember { mutableFloatStateOf(1f) }
-    LaunchedEffect(Unit) {
+    // 冒号呼吸：1 秒粒度（原 50ms 高频重组已废弃）；休眠时停更
+    LaunchedEffect(sleeping) {
+        if (sleeping) {
+            colonAlpha = 1f
+            return@LaunchedEffect
+        }
+        val start = System.nanoTime()
         while (true) {
-            val start = System.nanoTime()
-            while (true) {
-                val tMs = (System.nanoTime() - start) / 1_000_000.0
-                if (tMs >= 4000.0) break
-                val phase = (tMs / 4000.0).toFloat()
-                val tri = if (phase < 0.5f) phase * 2f else (1f - phase) * 2f
-                colonAlpha = 1f - 0.4f * tri
-                delay(50)
-            }
+            val tMs = (System.nanoTime() - start) / 1_000_000.0
+            val phase = ((tMs / 4000.0) % 1.0).toFloat()
+            val tri = if (phase < 0.5f) phase * 2f else (1f - phase) * 2f
+            colonAlpha = 1f - 0.4f * tri
+            delay(1000)
         }
     }
 
@@ -319,10 +325,13 @@ private fun ClockFace(
 @Composable
 private fun CaptureBadge(status: CaptureStatus, settings: AppSettings, mainColor: Color) {
     val sleeping = status.sleeping
+    // 按需绑定模式下，拍与拍之间相机处于释放状态（bound=false），
+    // 循环仍在跑时视为正常延时中，只有循环没起来才提示等待相机
+    val waitingCamera = !status.bound && !status.loopActive
     val dotColor = when {
         sleeping -> Color(0xFF4A4A4A)
         status.lastError != null -> Color(0xFFFF6B6B)
-        !status.bound -> Color(0xFFFFC857)
+        waitingCamera -> Color(0xFFFFC857)
         settings.paused -> Color(0xFF8A8A8A)
         status.loopActive -> Color(0xFF5BD97A)
         else -> Color(0xFFFFC857)
@@ -331,7 +340,7 @@ private fun CaptureBadge(status: CaptureStatus, settings: AppSettings, mainColor
         sleeping -> "休眠中"
         settings.paused -> "已暂停"
         status.lastError != null -> "出错"
-        !status.bound -> "等待相机"
+        waitingCamera -> "等待相机"
         status.loopActive -> if (status.capturing) "拍摄中" else "延时中"
         else -> "启动中"
     }
