@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -27,7 +28,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,12 +39,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lapseclock.GoldUi
@@ -136,23 +140,6 @@ fun ClockScreen(
     }
     val (shiftX, shiftY) = antiBurnOffset(shiftSeed, settings.burnShiftLevel)
 
-    var colonAlpha by remember { mutableFloatStateOf(1f) }
-    // 冒号呼吸：1 秒粒度（原 50ms 高频重组已废弃）；休眠时停更
-    LaunchedEffect(sleeping) {
-        if (sleeping) {
-            colonAlpha = 1f
-            return@LaunchedEffect
-        }
-        val start = System.nanoTime()
-        while (true) {
-            val tMs = (System.nanoTime() - start) / 1_000_000.0
-            val phase = ((tMs / 4000.0) % 1.0).toFloat()
-            val tri = if (phase < 0.5f) phase * 2f else (1f - phase) * 2f
-            colonAlpha = 1f - 0.4f * tri
-            delay(1000)
-        }
-    }
-
     val mainColor = if (settings.softBrightness) softWhite else pureWhite
     val showUi = !sleeping || sleepPeek
 
@@ -174,7 +161,6 @@ fun ClockScreen(
             now = now,
             settings = settings,
             mainColor = mainColor,
-            colonAlpha = colonAlpha,
             shiftX = shiftX,
             shiftY = shiftY,
             sleepNote = if (sleeping) "休眠中 · 08:00 恢复" else null,
@@ -238,7 +224,6 @@ private fun ClockFace(
     now: LocalDateTime,
     settings: AppSettings,
     mainColor: Color,
-    colonAlpha: Float,
     shiftX: Dp,
     shiftY: Dp,
     sleepNote: String?,
@@ -262,33 +247,73 @@ private fun ClockFace(
                 translationY = shiftY.toPx()
             },
         ) {
-            Text(
-                text = buildAnnotatedString {
-                    if (amPm.isNotEmpty()) {
-                        withStyle(SpanStyle(color = clockDim, fontSize = bigSize * 0.16f)) {
-                            append(amPm)
-                        }
-                    }
-                    withStyle(SpanStyle(color = mainColor, fontSize = bigSize)) {
-                        append(twoDigit)
-                    }
-                    withStyle(
-                        SpanStyle(color = mainColor.copy(alpha = colonAlpha), fontSize = bigSize)
-                    ) {
-                        append(":")
-                    }
-                    withStyle(SpanStyle(color = mainColor, fontSize = bigSize)) {
-                        append(minuteTwo)
-                    }
-                    if (settings.showSeconds) {
-                        withStyle(SpanStyle(color = clockDim, fontSize = bigSize * 0.30f)) {
-                            append(String.format(Locale.getDefault(), ":%02d", now.second))
-                        }
-                    }
-                },
-                fontWeight = FontWeight.Thin,
-                letterSpacing = 2.sp,
-            )
+            // 每个数字占固定宽度的格位：系统默认字体的数字宽度随字形变化（vivo 尤甚），
+            // 直接拼一个长字符串会导致整块时钟左右跳动。格位宽度取 0-9 中最宽的字形。
+            val density = LocalDensity.current
+            val measurer = rememberTextMeasurer()
+            val bigStyle = remember(bigSize) {
+                TextStyle(
+                    fontSize = bigSize,
+                    fontWeight = FontWeight.Thin,
+                    letterSpacing = 2.sp,
+                )
+            }
+            val smallStyle = remember(bigSize) {
+                TextStyle(
+                    fontSize = bigSize * 0.30f,
+                    fontWeight = FontWeight.Thin,
+                    letterSpacing = 2.sp,
+                )
+            }
+            val bigDigitW = remember(bigStyle) {
+                with(density) {
+                    ('0'..'9').maxOf { measurer.measure(it.toString(), bigStyle).size.width }.toDp()
+                }
+            }
+            val smallDigitW = remember(smallStyle) {
+                with(density) {
+                    ('0'..'9').maxOf { measurer.measure(it.toString(), smallStyle).size.width }.toDp()
+                }
+            }
+
+            Row {
+                if (amPm.isNotEmpty()) {
+                    Text(
+                        text = amPm.trim(),
+                        color = clockDim,
+                        fontSize = bigSize * 0.16f,
+                        fontWeight = FontWeight.Thin,
+                        modifier = Modifier
+                            .padding(end = with(density) { (bigSize * 0.06f).toPx().toDp() })
+                            .alignByBaseline(),
+                    )
+                }
+                DigitRow(twoDigit, mainColor, bigSize, bigDigitW)
+                Text(
+                    text = ":",
+                    color = mainColor,
+                    fontSize = bigSize,
+                    fontWeight = FontWeight.Thin,
+                    letterSpacing = 2.sp,
+                    modifier = Modifier.alignByBaseline(),
+                )
+                DigitRow(minuteTwo, mainColor, bigSize, bigDigitW)
+                if (settings.showSeconds) {
+                    Text(
+                        text = ":",
+                        color = clockDim,
+                        fontSize = bigSize * 0.30f,
+                        fontWeight = FontWeight.Thin,
+                        modifier = Modifier.alignByBaseline(),
+                    )
+                    DigitRow(
+                        String.format(Locale.getDefault(), "%02d", now.second),
+                        clockDim,
+                        bigSize * 0.30f,
+                        smallDigitW,
+                    )
+                }
+            }
             val dayInfo = remember(now.toLocalDate()) { dayInfoOf(now.toLocalDate()) }
             val dateFmt = DateTimeFormatter.ofPattern("M月d日", Locale.CHINA)
             val weekdayFmt = DateTimeFormatter.ofPattern("EEEE", Locale.CHINA)
@@ -319,6 +344,31 @@ private fun ClockFace(
                 )
             }
         }
+    }
+}
+
+/**
+ * 按固定宽度格位逐个渲染数字，格宽取 0-9 中最宽字形。
+ * 系统默认字体多为比例数字（vivo/OriginOS 尤甚），整串渲染会让时钟总宽度随数字变化而抖动。
+ */
+@Composable
+private fun RowScope.DigitRow(
+    digits: String,
+    color: Color,
+    fontSize: TextUnit,
+    slotWidth: Dp,
+) {
+    digits.forEach { ch ->
+        Text(
+            text = ch.toString(),
+            color = color,
+            fontSize = fontSize,
+            fontWeight = FontWeight.Thin,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .width(slotWidth)
+                .alignByBaseline(),
+        )
     }
 }
 
