@@ -8,7 +8,8 @@
 ## 功能
 
 - **横屏数字时钟**：黑底白字大字显示，支持 12/24 小时制、秒数开关；日期行附带农历与节日/节气
-- **左上天气面板**：与右上拍照状态对称，带防烧屏水平平移（数据源待接入，当前为占位内容）
+- **左上信息组**：天气（和风天气，定位优先 + 手动城市回退）与工行积存金现价（红涨绿跌），整组带防烧屏水平往复平移
+- **农历日期**：日期行附农历与节日/节气，命中节日时高亮
 - **屏幕常亮 + 防烧屏**：前台保持不熄屏，按分钟整体平移画面若干像素（OLED 友好），可调强度
 - **无预览延时拍照**：CameraX 仅绑定 `ImageCapture`（不绑 Preview），前置摄像头按固定时刻表拍摄；上一张未完成则跳过该拍次，只统计不补拍，节奏均匀
 - **夜间免打扰**：22:00 – 08:00 自动暂停拍照
@@ -25,7 +26,23 @@
 | 相机 | CameraX 1.3.1（仅 ImageCapture，无预览） |
 | 视频合成 | OpenGL ES + MediaCodec(H.264) + MediaMuxer，零额外依赖 |
 | 设置存储 | DataStore Preferences |
+| 网络数据 | HttpURLConnection + org.json（和风天气 now/geo API、工行积存金页面解析），零额外依赖 |
+| 农历 | cn.6tail:lunar |
 | 工具链 | AGP 8.2.2 / compileSdk 34 / minSdk 31 / Compose BOM 2024.02.00 |
+
+## 配置
+
+天气与积存金面板需要本地配置（`local.properties` 已被 gitignore，不随仓库提交）：
+
+```properties
+sdk.dir=E:/Android/SDK
+qweatherKey=<和风天气 API KEY>
+qweatherHost=<专属 API Host，如 abcxyz.re.qweatherapi.com>
+qweatherCity=<回退城市名，如 北京>
+```
+
+未配置 `qweatherKey`/`qweatherHost` 时天气面板不显示、也不申请定位权限，其余功能不受影响。
+积存金直接抓工行公开行情页，无需配置；网络不可用时面板静默隐藏。
 
 ## 构建
 
@@ -52,7 +69,8 @@ adb shell pm grant com.lapseclock android.permission.CAMERA
 3. 🎬 合成：选日期范围与帧率、分辨率，开始合成，进度完成后分享或查看
 4. 照片位于 `Android/data/com.lapseclock/files/Pictures/captures/`，成片位于系统相册 `Timelapse` 目录
 
-存储参考：默认 60 秒一张（1440 张/天），分辨率与画质可在设置中调整，可开自动清理旧照。
+存储参考：默认 60 秒一张（1440 张/天）、分辨率 1600×1200、JPEG 质量 90，单张约 0.3–0.6MB（约 0.4–0.8GB/天）；
+分辨率可在设置中调整，可开自动清理旧照。
 
 ## 项目结构
 
@@ -63,13 +81,21 @@ app/src/main/java/com/lapseclock/
 ├── NightSleep.kt            夜间免打扰时段
 ├── ui/
 │   ├── LapseApp.kt          界面路由（时钟/设置/合成）
-│   ├── ClockScreen.kt       大字时钟、状态角标、控件自动隐藏
-│   ├── SettingsSheet.kt     间隔/分辨率/时制/水印/防烧屏/清理
+│   ├── ClockScreen.kt       大字时钟、状态角标、控件自动隐藏、防烧屏平移
+│   ├── WeatherPanel.kt      左上信息组：天气胶囊 + 积存金胶囊
+│   ├── SettingsSheet.kt     间隔/分辨率/时制/水印/防烧屏/清理/天气城市
 │   └── ExportScreen.kt      日期范围、帧率分辨率、进度、结果
 ├── capture/
 │   ├── CaptureController.kt 无预览拍照循环（固定时刻表、跳过不堆积）
 │   ├── PhotoStore.kt        文件命名、按日期检索、统计、清理
 │   └── Watermark.kt         JPEG 水印烧录
+├── calendar/
+│   └── LunarInfo.kt         农历、节日与节气
+├── weather/
+│   ├── WeatherRepo.kt       和风天气 now / geo 接口
+│   └── LocationProvider.kt  定位取坐标
+├── gold/
+│   └── GoldRepo.kt          工行积存金现价抓取
 ├── settings/
 │   └── SettingsRepo.kt      DataStore 封装
 └── video/
