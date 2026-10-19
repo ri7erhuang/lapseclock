@@ -51,6 +51,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val permissionNeeded = MutableStateFlow(false)
 
     val weather = MutableStateFlow<WeatherUi?>(null)
+
+    /** local.properties 里是否真的配了和风天气（key + host 都非空） */
+    val weatherConfigured: Boolean =
+        BuildConfig.QWEATHER_KEY.isNotBlank() && BuildConfig.QWEATHER_HOST.isNotBlank()
     private val weatherRepo = WeatherRepo()
     private val locationProvider = LocationProvider(app)
     private val weatherMutex = Mutex()
@@ -109,6 +113,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun refreshWeather() {
+        // 未配置和风天气（local.properties 缺 key/host）时直接跳过，避免每 5 分钟刷一次必然失败的请求
+        if (!weatherConfigured) return
         val s = settings.value
         val fallbackCity = s.weatherCity.trim()
         weatherMutex.withLock {

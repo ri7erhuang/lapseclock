@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
             cameraPermission.launch(Manifest.permission.CAMERA)
         }
 
-        if (vm.settings.value.useLocation && !hasLocationPermission()) {
+        if (vm.weatherConfigured && vm.settings.value.useLocation && !hasLocationPermission()) {
             locationPermission.launch(
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             )
