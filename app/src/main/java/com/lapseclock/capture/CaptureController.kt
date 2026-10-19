@@ -191,7 +191,6 @@ class CaptureController(
                 var now = System.currentTimeMillis()
                 if (target > now) {
                     delay(target - now)
-                    now = System.currentTimeMillis()
                 } else {
                     val lateness = now - target
                     if (lateness >= intervalMs) {
@@ -306,7 +305,12 @@ class CaptureController(
         val bytes = ByteArray(buffer.remaining())
         buffer.get(bytes)
 
-        var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return false
+        // inMutable 让解码结果本身可写，省掉下面「不可变位图再拷一份」的全尺寸拷贝（1600×1200 约 7.7MB）
+        val decodeOptions = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inMutable = true
+        }
+        var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions) ?: return false
 
         val rotation = image.imageInfo.rotationDegrees
         if (rotation != 0) {
@@ -315,7 +319,7 @@ class CaptureController(
             if (rotated != bmp) bmp.recycle()
             bmp = rotated
         } else if (!bmp.isMutable) {
-            // Canvas 需要可变位图；旋转分支 createBitmap 已保证可变
+            // 兜底：个别机型忽略 inMutable，Canvas 需要可变位图
             val mutable = bmp.copy(Bitmap.Config.ARGB_8888, true)
             bmp.recycle()
             bmp = mutable
@@ -330,10 +334,12 @@ class CaptureController(
         return true
     }
 
-    private fun refreshCounts() {
+    private suspend fun refreshCounts() {
+        // 目录扫描放到 IO 线程：拍照循环跑在 Main 上，不能在这里阻塞 UI
+        val counts = withContext(Dispatchers.IO) { store.counts() }
         _status.value = _status.value.copy(
-            todayCount = store.countToday(),
-            totalCount = store.totalCount(),
+            todayCount = counts.today,
+            totalCount = counts.total,
         )
     }
 
@@ -343,6 +349,7 @@ class CaptureController(
         }
 
     companion object {
-        private const val JPEG_QUALITY = 100
+        /** 90 与 100 肉眼几乎无差，单张体积约省一半；CameraX 直存与水印重编码共用 */
+        private const val JPEG_QUALITY = 90
     }
 }

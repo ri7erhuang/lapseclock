@@ -40,6 +40,24 @@ class PhotoStore(rootDir: File) {
         return out.sortedBy { it.name }
     }
 
+    data class Counts(val today: Int, val total: Int)
+
+    /**
+     * 单次目录遍历同时统计今日/累计张数。
+     * 拍照循环每分钟都要刷新计数，避免 countToday()+totalCount() 的两次全量扫描
+     * （后者还会 sortOnce + groupBy + 文件名解析日期）。
+     */
+    fun counts(): Counts {
+        val todayPrefix = "capture_" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
+        var today = 0
+        var total = 0
+        dir.listFiles { f -> f.isFile && f.extension.equals("jpg", true) }?.forEach { f ->
+            total++
+            if (f.name.startsWith(todayPrefix)) today++
+        }
+        return Counts(today, total)
+    }
+
     fun totalCount(): Int = listAll().size
 
     fun totalBytes(): Long = listAll().sumOf { it.length() }
