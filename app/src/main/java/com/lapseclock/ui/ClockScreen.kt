@@ -47,6 +47,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lapseclock.GoldUi
 import com.lapseclock.calendar.dayInfoOf
 import com.lapseclock.capture.CaptureStatus
 import com.lapseclock.isSleepHour
@@ -91,6 +92,7 @@ fun ClockScreen(
     onOpenSettings: () -> Unit,
     onOpenExport: () -> Unit,
     weather: WeatherUi?,
+    gold: GoldUi?,
     modifier: Modifier = Modifier,
 ) {
     var now by remember { mutableStateOf(LocalDateTime.now()) }
@@ -173,9 +175,10 @@ fun ClockScreen(
         )
 
         if (!sleeping) {
-            weather?.let {
-                WeatherPanel(
-                    weather = it,
+            if (weather != null || gold != null) {
+                TopInfoRow(
+                    weather = weather,
+                    gold = gold,
                     mainColor = mainColor,
                     modifier = Modifier.align(Alignment.TopStart),
                 )

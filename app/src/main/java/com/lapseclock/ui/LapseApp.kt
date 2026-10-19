@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import com.lapseclock.GoldUi
 import com.lapseclock.Screen
 import com.lapseclock.capture.CaptureStatus
 import com.lapseclock.capture.PhotoStore
@@ -23,6 +24,7 @@ fun LapseApp(
     permissionNeeded: Boolean,
     exportState: ExportState,
     weather: WeatherUi?,
+    gold: GoldUi?,
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenExport: () -> Unit,
@@ -60,6 +62,7 @@ fun LapseApp(
             onOpenSettings = onOpenSettings,
             onOpenExport = onOpenExport,
             weather = weather,
+            gold = gold,
         )
 
         when (screen) {

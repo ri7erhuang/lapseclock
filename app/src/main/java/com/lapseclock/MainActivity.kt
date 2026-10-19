@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
             val status by vm.capture.status.collectAsState()
             val exportState by vm.export.state.collectAsState()
             val weather by vm.weather.collectAsState()
+            val gold by vm.gold.collectAsState()
 
             LapseApp(
                 screen = screen,
@@ -64,6 +65,7 @@ class MainActivity : ComponentActivity() {
                 permissionNeeded = permissionNeeded,
                 exportState = exportState,
                 weather = weather,
+                gold = gold,
                 onRequestPermission = { cameraPermission.launch(Manifest.permission.CAMERA) },
                 onOpenSettings = { vm.screen.value = Screen.Settings },
                 onOpenExport = { vm.screen.value = Screen.Export },

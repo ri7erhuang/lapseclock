@@ -9,6 +9,7 @@ import com.lapseclock.capture.CaptureController
 import com.lapseclock.capture.PhotoStore
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.settings.SettingsRepo
+import com.lapseclock.gold.GoldRepo
 import com.lapseclock.video.ExportController
 import com.lapseclock.weather.LocationProvider
 import com.lapseclock.weather.WeatherRepo
@@ -23,9 +24,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import android.os.Environment
 
 enum class Screen { Clock, Settings, Export }
+
+/** rising：与上一次抓取相比的涨跌，null 表示无对比（首次或持平） */
+data class GoldUi(val price: String, val rising: Boolean?)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -70,6 +75,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshWeatherNow() = viewModelScope.launch { refreshWeather() }
 
+    val gold = MutableStateFlow<GoldUi?>(null)
+
+    init {
+        // 积存金：每 30 秒
+        viewModelScope.launch {
+            while (true) {
+                refreshGold()
+                delay(30_000L)
+            }
+        }
+    }
+
+    private suspend fun refreshGold() {
+        runCatching { withTimeout(20_000L) { GoldRepo.fetchPrice() } }
+            .onSuccess { newPrice ->
+                val prev = gold.value?.price
+                val rising = prev?.let {
+                    runCatching {
+                        when {
+                            newPrice.toBigDecimal() > it.toBigDecimal() -> true
+                            newPrice.toBigDecimal() < it.toBigDecimal() -> false
+                            else -> null
+                        }
+                    }.getOrNull()
+                }
+                gold.value = GoldUi(newPrice, rising)
+                android.util.Log.i("LapseClock", "积存金: $newPrice (上次 $prev)")
+            }
+            .onFailure {
+                android.util.Log.w("LapseClock", "积存金刷新失败: ${it.javaClass.simpleName} ${it.message}")
+            }
+    }
+
     private suspend fun refreshWeather() {
         val s = settings.value
         val fallbackCity = s.weatherCity.trim()
@@ -77,18 +115,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var result: WeatherUi? = null
 
             if (s.useLocation && hasLocationPermission()) {
-                val coords = runCatching { locationProvider.getLocation() }
+                val coords = runCatching { withTimeout(15_000L) { locationProvider.getLocation() } }
                     .onFailure { android.util.Log.w("LapseClock", "定位失败: ${it.message}") }
                     .getOrNull()
                 if (coords != null) {
-                    result = runCatching { weatherRepo.fetchByCoords(coords.first, coords.second) }
+                    result = runCatching { withTimeout(20_000L) { weatherRepo.fetchByCoords(coords.first, coords.second) } }
                         .onFailure { android.util.Log.w("LapseClock", "坐标天气失败: ${it.message}") }
                         .getOrNull()
                 }
             }
 
             if (result == null && fallbackCity.isNotBlank()) {
-                result = runCatching { weatherRepo.fetch(fallbackCity) }
+                result = runCatching { withTimeout(20_000L) { weatherRepo.fetch(fallbackCity) } }
                     .onFailure { android.util.Log.w("LapseClock", "城市天气失败: ${it.javaClass.simpleName} ${it.message}") }
                     .getOrNull()
             }
