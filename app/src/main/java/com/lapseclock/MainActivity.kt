@@ -69,6 +69,8 @@ class MainActivity : ComponentActivity() {
                 onRequestPermission = { cameraPermission.launch(Manifest.permission.CAMERA) },
                 onOpenSettings = { vm.screen.value = Screen.Settings },
                 onOpenExport = { vm.screen.value = Screen.Export },
+                onEnterSleep = { vm.enterSleep() },
+                onWakeUp = { vm.wakeUp() },
                 onBack = { vm.screen.value = Screen.Clock },
                 onSetInterval = { vm.setInterval(it) },
                 onSetResolution = { w, h -> vm.setResolution(w, h) },

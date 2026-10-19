@@ -15,7 +15,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.google.common.util.concurrent.ListenableFuture
-import com.lapseclock.isSleepHour
+import com.lapseclock.isSleeping
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.settings.SettingsRepo
 import kotlinx.coroutines.CoroutineScope
@@ -137,10 +137,13 @@ class CaptureController(
             var lastW = -1
             var lastH = -1
 
+            // 启动即初始化计数，否则暂停/休眠状态下角标会一直显示 0
+            refreshCounts()
+
             while (isActive) {
                 val s = repo.settings.first()
 
-                if (isSleepHour(java.time.LocalTime.now().hour)) {
+                if (isSleeping(s.manualSleep, s.autoSleepSnoozeNight)) {
                     _status.value = _status.value.copy(loopActive = false, sleeping = true)
                     unbindInternal()
                     t0 = 0L
@@ -190,7 +193,22 @@ class CaptureController(
                 var target = t0 + n * intervalMs
                 var now = System.currentTimeMillis()
                 if (target > now) {
-                    delay(target - now)
+                    // 分片等待：每段复查一次设置，休眠/暂停最多 1 秒内生效，不必等满整个间隔
+                    var interrupted = false
+                    while (isActive) {
+                        val left = target - System.currentTimeMillis()
+                        if (left <= 0L) break
+                        delay(left.coerceAtMost(WAIT_SLICE_MS))
+                        val cur = repo.settings.first()
+                        if (cur.paused || isSleeping(cur.manualSleep, cur.autoSleepSnoozeNight)) {
+                            interrupted = true
+                            break
+                        }
+                    }
+                    if (interrupted) {
+                        t0 = 0L
+                        continue
+                    }
                 } else {
                     val lateness = now - target
                     if (lateness >= intervalMs) {
@@ -351,5 +369,8 @@ class CaptureController(
     companion object {
         /** 90 与 100 肉眼几乎无差，单张体积约省一半；CameraX 直存与水印重编码共用 */
         private const val JPEG_QUALITY = 90
+
+        /** 时刻表等待的分片长度：每段结束复查设置，保证休眠/暂停秒级生效 */
+        private const val WAIT_SLICE_MS = 1000L
     }
 }

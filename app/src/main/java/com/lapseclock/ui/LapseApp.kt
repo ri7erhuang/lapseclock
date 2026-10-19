@@ -28,6 +28,8 @@ fun LapseApp(
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenExport: () -> Unit,
+    onEnterSleep: () -> Unit,
+    onWakeUp: () -> Unit,
     onBack: () -> Unit,
     onSetInterval: (Int) -> Unit,
     onSetResolution: (Int, Int) -> Unit,
@@ -61,6 +63,8 @@ fun LapseApp(
             onRequestPermission = onRequestPermission,
             onOpenSettings = onOpenSettings,
             onOpenExport = onOpenExport,
+            onEnterSleep = onEnterSleep,
+            onWakeUp = onWakeUp,
             weather = weather,
             gold = gold,
         )

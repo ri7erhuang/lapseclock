@@ -68,24 +68,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 .distinctUntilChanged()
                 .collect { refreshWeather() }
         }
-        // 常规刷新：每 5 分钟（休眠时段不刷新）
+        // 常规刷新：每 5 分钟（休眠不刷新）
         viewModelScope.launch {
             while (true) {
                 delay(REFRESH_INTERVAL_MS)
-                if (!isSleepHour(java.time.LocalTime.now().hour)) refreshWeather()
+                if (!sleepingNow()) refreshWeather()
             }
         }
     }
 
     fun refreshWeatherNow() = viewModelScope.launch { refreshWeather() }
 
+    /** 当前是否处于休眠：手动休眠优先，其次夜间时段且当晚没被手动唤醒 */
+    fun sleepingNow(): Boolean = with(settings.value) {
+        isSleeping(manualSleep, autoSleepSnoozeNight)
+    }
+
+    /** 手动进入休眠：拍照停止、天气与积存金不再刷新、时钟熄屏 */
+    fun enterSleep() = viewModelScope.launch { repo.setManualSleep(true) }
+
+    /** 退出休眠；若仍处于夜间时段，记下「当晚不再休眠」，并立刻补一次数据 */
+    fun wakeUp() = viewModelScope.launch {
+        val now = java.time.LocalDateTime.now()
+        if (isSleepHour(now.hour)) repo.setSnoozeNight(nightKeyOf(now))
+        repo.setManualSleep(false)
+        refreshWeather()
+        refreshGold()
+    }
+
     val gold = MutableStateFlow<GoldUi?>(null)
 
     init {
-        // 积存金：每 5 分钟（休眠时段不刷新）
+        // 积存金：每 5 分钟（休眠不刷新）
         viewModelScope.launch {
             while (true) {
-                if (!isSleepHour(java.time.LocalTime.now().hour)) refreshGold()
+                if (!sleepingNow()) refreshGold()
                 delay(REFRESH_INTERVAL_MS)
             }
         }

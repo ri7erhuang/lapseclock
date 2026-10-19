@@ -29,6 +29,10 @@ data class AppSettings(
     val watermarkShowTime: Boolean = true,
     val weatherCity: String = BuildConfig.QWEATHER_CITY,
     val useLocation: Boolean = true,
+    /** 手动休眠：点时钟上的 🌙 进入，点 ☀ 退出 */
+    val manualSleep: Boolean = false,
+    /** 被手动唤醒的那一夜（nightKeyOf），当晚不再自动休眠 */
+    val autoSleepSnoozeNight: String = "",
 ) {
     val targetLabel: String get() = "${targetWidth}×${targetHeight}"
 }
@@ -50,6 +54,8 @@ class SettingsRepo(private val context: Context) {
         val WATERMARK_SHOW_TIME = booleanPreferencesKey("watermark_show_time")
         val WEATHER_CITY = stringPreferencesKey("weather_city")
         val USE_LOCATION = booleanPreferencesKey("use_location")
+        val MANUAL_SLEEP = booleanPreferencesKey("manual_sleep")
+        val SNOOZE_NIGHT = stringPreferencesKey("auto_sleep_snooze_night")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -68,6 +74,8 @@ class SettingsRepo(private val context: Context) {
             watermarkShowTime = p[Keys.WATERMARK_SHOW_TIME] ?: true,
             weatherCity = p[Keys.WEATHER_CITY] ?: BuildConfig.QWEATHER_CITY,
             useLocation = p[Keys.USE_LOCATION] ?: true,
+            manualSleep = p[Keys.MANUAL_SLEEP] ?: false,
+            autoSleepSnoozeNight = p[Keys.SNOOZE_NIGHT] ?: "",
         )
     }
 
@@ -87,4 +95,6 @@ class SettingsRepo(private val context: Context) {
     suspend fun setWatermarkShowTime(v: Boolean) = context.dataStore.edit { it[Keys.WATERMARK_SHOW_TIME] = v }
     suspend fun setWeatherCity(city: String) = context.dataStore.edit { it[Keys.WEATHER_CITY] = city }
     suspend fun setUseLocation(v: Boolean) = context.dataStore.edit { it[Keys.USE_LOCATION] = v }
+    suspend fun setManualSleep(v: Boolean) = context.dataStore.edit { it[Keys.MANUAL_SLEEP] = v }
+    suspend fun setSnoozeNight(night: String) = context.dataStore.edit { it[Keys.SNOOZE_NIGHT] = night }
 }

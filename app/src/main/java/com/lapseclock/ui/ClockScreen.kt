@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -54,7 +56,7 @@ import androidx.compose.ui.unit.sp
 import com.lapseclock.GoldUi
 import com.lapseclock.calendar.dayInfoOf
 import com.lapseclock.capture.CaptureStatus
-import com.lapseclock.isSleepHour
+import com.lapseclock.isSleeping
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.weather.WeatherUi
 import kotlinx.coroutines.delay
@@ -95,12 +97,15 @@ fun ClockScreen(
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenExport: () -> Unit,
+    onEnterSleep: () -> Unit,
+    onWakeUp: () -> Unit,
     weather: WeatherUi?,
     gold: GoldUi?,
     modifier: Modifier = Modifier,
 ) {
     var now by remember { mutableStateOf(LocalDateTime.now()) }
-    val sleeping = isSleepHour(now.hour)
+    val manualSleeping = settings.manualSleep
+    val sleeping = isSleeping(manualSleeping, settings.autoSleepSnoozeNight, now)
     val tickMs = when {
         sleeping -> 1000L
         settings.showSeconds -> 200L
@@ -118,7 +123,8 @@ fun ClockScreen(
         if (!sleeping) {
             sleepPeek = false
         } else if (sleepPeek) {
-            delay(6000)
+            // 留足时间让用户看清并点到右上角的唤醒按钮
+            delay(15_000)
             sleepPeek = false
         }
     }
@@ -163,7 +169,11 @@ fun ClockScreen(
             mainColor = mainColor,
             shiftX = shiftX,
             shiftY = shiftY,
-            sleepNote = if (sleeping) "休眠中 · 08:00 恢复" else null,
+            sleepNote = when {
+                !sleeping -> null
+                manualSleeping -> "休眠中 · 点右上角 ☀ 唤醒"
+                else -> "休眠中 · 08:00 自动恢复（☀ 可提前唤醒）"
+            },
         )
 
         if (!sleeping) {
@@ -200,6 +210,13 @@ fun ClockScreen(
                             tint = mainColor,
                         )
                     }
+                    IconButton(onClick = onEnterSleep) {
+                        Icon(
+                            imageVector = Icons.Filled.DarkMode,
+                            contentDescription = "休眠",
+                            tint = mainColor,
+                        )
+                    }
                 }
                 status.lastError?.let {
                     Text(
@@ -210,6 +227,22 @@ fun ClockScreen(
                         modifier = Modifier.width(240.dp),
                     )
                 }
+            }
+        }
+
+        // 休眠中只有 peek 的几秒内露出唤醒按钮，避免黑屏上挂着控件
+        if (sleeping && sleepPeek) {
+            IconButton(
+                onClick = onWakeUp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 8.dp, end = 12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.LightMode,
+                    contentDescription = "唤醒",
+                    tint = mainColor,
+                )
             }
         }
 

@@ -134,6 +134,7 @@ fun SettingsSheet(
             SwitchRow("暂停拍照", settings.paused, onSetPaused)
             Text(
                 text = "休眠时段 22:00–08:00：自动暂停拍照，屏幕纯黑（防烧屏）；点按屏幕可临时查看时间。\n" +
+                    "时钟右上角 🌙 可随时手动进入休眠，休眠中轻点屏幕后点 ☀ 退出。\n" +
                     "建议系统亮度不超过 50%，并保持柔和亮度开启。",
                 color = panelDim,
                 fontSize = 12.sp,
