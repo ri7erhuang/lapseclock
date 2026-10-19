@@ -67,7 +67,7 @@ class CaptureController(
     @Volatile
     private var owner: LifecycleOwner? = null
 
-    /** 按需绑定：相机只在拍前短暂打开，拍完即释放（省电） */
+    /** 启动循环：相机绑定后持续占用，仅在休眠/暂停/停止时释放 */
     suspend fun start(owner: LifecycleOwner) {
         this.owner = owner
         if (loopJob?.isActive != true) startLoop()
@@ -171,7 +171,7 @@ class CaptureController(
                     if (imageCapture != null) unbindInternal()
                 }
 
-                // 拍前按需绑定
+                // 首次绑定（此后持续占用，不在拍后解绑）
                 if (imageCapture == null) {
                     owner?.let { bindInternal(it) }
                     if (imageCapture == null) {
@@ -223,9 +223,6 @@ class CaptureController(
                 }
 
                 if (!ok) delay(intervalMs.coerceAtMost(3000L))
-
-                // 长间隔拍完即释放相机，空闲期不占 sensor
-                if (intervalMs >= IDLE_UNBIND_MS) unbindInternal()
             }
         }
     }
@@ -347,8 +344,5 @@ class CaptureController(
 
     companion object {
         private const val JPEG_QUALITY = 100
-
-        /** 间隔不小于该值时，拍完即 unbind 释放相机 */
-        private const val IDLE_UNBIND_MS = 30_000L
     }
 }
