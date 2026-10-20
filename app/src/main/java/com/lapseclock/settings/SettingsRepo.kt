@@ -19,7 +19,6 @@ data class AppSettings(
     val targetWidth: Int = 1600,
     val targetHeight: Int = 1200,
     val use24h: Boolean = true,
-    val showSeconds: Boolean = true,
     val paused: Boolean = false,
     val autoCleanDays: Int = 0,
     val softBrightness: Boolean = true,
@@ -33,8 +32,21 @@ data class AppSettings(
     val manualSleep: Boolean = false,
     /** 被手动唤醒的那一夜（nightKeyOf），当晚不再自动休眠 */
     val autoSleepSnoozeNight: String = "",
+    /** 时钟皮肤 id，[com.lapseclock.ui.theme.Themes.AUTO] 表示跟随时段自动 */
+    val themeId: String = com.lapseclock.ui.theme.Themes.AUTO,
+    /** 闲时降频：从几点开始降频（0 表示关闭）。下班后空办公室继续 60s 一张纯属浪费 */
+    val idleStartHour: Int = 19,
+    /** 闲时降频后的拍照间隔 */
+    val idleIntervalSec: Int = 300,
 ) {
     val targetLabel: String get() = "${targetWidth}×${targetHeight}"
+
+    /** 当前时刻是否处于闲时降频时段（夜间休眠本身就是不拍，所以不需要跨夜处理） */
+    fun isIdleHour(hour: Int): Boolean = idleStartHour in 1..23 && hour >= idleStartHour
+
+    /** 当前生效的拍照间隔（秒） */
+    fun effectiveIntervalSec(hour: Int): Int =
+        if (isIdleHour(hour)) idleIntervalSec else intervalSec
 }
 
 class SettingsRepo(private val context: Context) {
@@ -44,7 +56,6 @@ class SettingsRepo(private val context: Context) {
         val WIDTH = intPreferencesKey("target_width")
         val HEIGHT = intPreferencesKey("target_height")
         val USE_24H = booleanPreferencesKey("use_24h")
-        val SHOW_SECONDS = booleanPreferencesKey("show_seconds")
         val PAUSED = booleanPreferencesKey("paused")
         val AUTO_CLEAN = intPreferencesKey("auto_clean_days")
         val SOFT_BRIGHTNESS = booleanPreferencesKey("soft_brightness")
@@ -56,6 +67,9 @@ class SettingsRepo(private val context: Context) {
         val USE_LOCATION = booleanPreferencesKey("use_location")
         val MANUAL_SLEEP = booleanPreferencesKey("manual_sleep")
         val SNOOZE_NIGHT = stringPreferencesKey("auto_sleep_snooze_night")
+        val THEME_ID = stringPreferencesKey("theme_id")
+        val IDLE_START_HOUR = intPreferencesKey("idle_start_hour")
+        val IDLE_INTERVAL = intPreferencesKey("idle_interval_sec")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -64,7 +78,6 @@ class SettingsRepo(private val context: Context) {
             targetWidth = p[Keys.WIDTH] ?: 1600,
             targetHeight = p[Keys.HEIGHT] ?: 1200,
             use24h = p[Keys.USE_24H] ?: true,
-            showSeconds = p[Keys.SHOW_SECONDS] ?: true,
             paused = p[Keys.PAUSED] ?: false,
             autoCleanDays = p[Keys.AUTO_CLEAN] ?: 0,
             softBrightness = p[Keys.SOFT_BRIGHTNESS] ?: true,
@@ -76,6 +89,9 @@ class SettingsRepo(private val context: Context) {
             useLocation = p[Keys.USE_LOCATION] ?: true,
             manualSleep = p[Keys.MANUAL_SLEEP] ?: false,
             autoSleepSnoozeNight = p[Keys.SNOOZE_NIGHT] ?: "",
+            themeId = p[Keys.THEME_ID] ?: com.lapseclock.ui.theme.Themes.AUTO,
+            idleStartHour = p[Keys.IDLE_START_HOUR] ?: 19,
+            idleIntervalSec = p[Keys.IDLE_INTERVAL] ?: 300,
         )
     }
 
@@ -85,7 +101,6 @@ class SettingsRepo(private val context: Context) {
         it[Keys.HEIGHT] = h
     }
     suspend fun setUse24h(v: Boolean) = context.dataStore.edit { it[Keys.USE_24H] = v }
-    suspend fun setShowSeconds(v: Boolean) = context.dataStore.edit { it[Keys.SHOW_SECONDS] = v }
     suspend fun setPaused(v: Boolean) = context.dataStore.edit { it[Keys.PAUSED] = v }
     suspend fun setAutoCleanDays(days: Int) = context.dataStore.edit { it[Keys.AUTO_CLEAN] = days }
     suspend fun setSoftBrightness(v: Boolean) = context.dataStore.edit { it[Keys.SOFT_BRIGHTNESS] = v }
@@ -97,4 +112,7 @@ class SettingsRepo(private val context: Context) {
     suspend fun setUseLocation(v: Boolean) = context.dataStore.edit { it[Keys.USE_LOCATION] = v }
     suspend fun setManualSleep(v: Boolean) = context.dataStore.edit { it[Keys.MANUAL_SLEEP] = v }
     suspend fun setSnoozeNight(night: String) = context.dataStore.edit { it[Keys.SNOOZE_NIGHT] = night }
+    suspend fun setThemeId(id: String) = context.dataStore.edit { it[Keys.THEME_ID] = id }
+    suspend fun setIdleStartHour(hour: Int) = context.dataStore.edit { it[Keys.IDLE_START_HOUR] = hour }
+    suspend fun setIdleInterval(sec: Int) = context.dataStore.edit { it[Keys.IDLE_INTERVAL] = sec }
 }

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lapseclock.capture.PhotoStore
 import com.lapseclock.settings.AppSettings
+import com.lapseclock.ui.theme.Themes
 import java.util.Locale
 
 private val panelBg = Color(0xFF0B0B0B)
@@ -49,7 +50,6 @@ fun SettingsSheet(
     onSetInterval: (Int) -> Unit,
     onSetResolution: (Int, Int) -> Unit,
     onSetUse24h: (Boolean) -> Unit,
-    onSetShowSeconds: (Boolean) -> Unit,
     onSetPaused: (Boolean) -> Unit,
     onSetAutoClean: (Int) -> Unit,
     onSetSoftBrightness: (Boolean) -> Unit,
@@ -59,6 +59,9 @@ fun SettingsSheet(
     onSetWatermarkShowTime: (Boolean) -> Unit,
     onSetWeatherCity: (String) -> Unit,
     onSetUseLocation: (Boolean) -> Unit,
+    onSetThemeId: (String) -> Unit,
+    onSetIdleStartHour: (Int) -> Unit,
+    onSetIdleInterval: (Int) -> Unit,
 ) {
     val stats = remember { runCatching {
         Triple(store.countToday(), store.totalCount(), store.totalBytes())
@@ -109,8 +112,27 @@ fun SettingsSheet(
 
             SectionTitle("时钟")
             SwitchRow("24 小时制", settings.use24h, onSetUse24h)
-            SwitchRow("显示秒数", settings.showSeconds, onSetShowSeconds)
             SwitchRow("柔和亮度（防烧屏）", settings.softBrightness, onSetSoftBrightness)
+
+            SectionTitle("时钟主题")
+            val choices = Themes.choices
+            OptionRow(
+                options = choices.take(3).map { it.name to it.id },
+                selected = settings.themeId,
+                onSelect = onSetThemeId,
+            )
+            OptionRow(
+                options = choices.drop(3).map { it.name to it.id },
+                selected = settings.themeId,
+                onSelect = onSetThemeId,
+            )
+            Text(
+                text = "自动：按时段换肤（黎明 / 白天 / 黄昏 / 夜晚），并随天气与节日调整强调色。" +
+                    "双击时钟可在各主题间快速切换。",
+                color = panelDim,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+            )
 
             SectionTitle("防烧屏偏移")
             OptionRow(
@@ -136,6 +158,25 @@ fun SettingsSheet(
                 text = "休眠时段 22:00–08:00：自动暂停拍照，屏幕纯黑（防烧屏）；点按屏幕可临时查看时间。\n" +
                     "时钟右上角 🌙 可随时手动进入休眠，休眠中轻点屏幕后点 ☀ 退出。\n" +
                     "建议系统亮度不超过 50%，并保持柔和亮度开启。",
+                color = panelDim,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+            )
+
+            SectionTitle("闲时降频")
+            OptionRow(
+                options = listOf("关闭" to 0, "18 点" to 18, "19 点" to 19, "20 点" to 20),
+                selected = settings.idleStartHour,
+                onSelect = onSetIdleStartHour,
+            )
+            OptionRow(
+                options = listOf("2 分钟" to 120, "5 分钟" to 300, "10 分钟" to 600),
+                selected = settings.idleIntervalSec,
+                onSelect = onSetIdleInterval,
+            )
+            Text(
+                text = "下班后空办公室的画面没有变化，继续按常规间隔拍纯属浪费空间。" +
+                    "到设定时间后自动放宽拍摄间隔，第二天继续按常规间隔拍。",
                 color = panelDim,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,

@@ -83,6 +83,65 @@ class PhotoStore(rootDir: File) {
         return removed
     }
 
+    /**
+     * 某一天的概况。first/last 是当天首帧与末帧 —— 两张图并排就能一眼看出「这一天变了什么」，
+     * 比任何数字都直观，也是后续胶卷视图的地基。
+     */
+    data class DayStat(
+        val date: LocalDate,
+        val count: Int,
+        val bytes: Long,
+        val first: File,
+        val last: File,
+        val firstTime: String,
+        val lastTime: String,
+    )
+
+    /** 最近 [days] 天的概况，新的在前；无照片的日期不占位 */
+    fun recentDayStats(days: Int): List<DayStat> {
+        val grouped = groupByDate()
+        return grouped.entries
+            .sortedByDescending { it.key }
+            .take(days)
+            .map { (date, files) ->
+                val sorted = files.sortedBy { it.name }
+                val first = sorted.first()
+                val last = sorted.last()
+                DayStat(
+                    date = date,
+                    count = sorted.size,
+                    bytes = sorted.sumOf { it.length() },
+                    first = first,
+                    last = last,
+                    firstTime = timeOf(first),
+                    lastTime = timeOf(last),
+                )
+            }
+    }
+
+    /** 从文件名取 HH:mm，文件名形如 capture_yyyyMMdd_HHmmssSSS.jpg */
+    fun timeOf(file: File): String {
+        val raw = file.name.removePrefix("capture_")
+        return try {
+            raw.substring(9, 11) + ":" + raw.substring(11, 13)
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    /** 全部照片的总字节数 + 天数，第二屏一次扫描拿全 */
+    fun overview(): Triple<Int, Long, Int> {
+        var total = 0
+        var bytes = 0L
+        val days = HashSet<String>()
+        dir.listFiles { f -> f.isFile && f.extension.equals("jpg", true) }?.forEach { f ->
+            total++
+            bytes += f.length()
+            days.add(f.name.removePrefix("capture_").take(8))
+        }
+        return Triple(total, bytes, days.size)
+    }
+
     private fun parseDate(name: String): LocalDate = try {
         LocalDate.parse(name.removePrefix("capture_").substring(0, 8), DateTimeFormatter.BASIC_ISO_DATE)
     } catch (e: Exception) {

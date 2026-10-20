@@ -42,6 +42,8 @@ data class CaptureStatus(
     val skipped: Int = 0,
     val todayCount: Int = 0,
     val totalCount: Int = 0,
+    /** 当前处于闲时降频时段（下班后的空办公室没必要 60s 一张） */
+    val idle: Boolean = false,
 )
 
 /**
@@ -161,8 +163,11 @@ class CaptureController(
                     continue
                 }
 
-                val intervalMs = s.intervalSec * 1000L
+                val idle = s.isIdleHour(java.time.LocalTime.now().hour)
+                if (_status.value.idle != idle) _status.value = _status.value.copy(idle = idle)
+                val intervalMs = s.effectiveIntervalSec(java.time.LocalTime.now().hour) * 1000L
                 if (intervalMs != lastInterval) {
+                    // 进出闲时时段时时刻表要重排，否则会继续沿用白天的节奏
                     t0 = 0L
                     lastInterval = intervalMs
                 }

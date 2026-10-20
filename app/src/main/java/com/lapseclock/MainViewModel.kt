@@ -172,7 +172,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setInterval(sec: Int) = viewModelScope.launch { repo.setInterval(sec) }
     fun setResolution(w: Int, h: Int) = viewModelScope.launch { repo.setResolution(w, h) }
     fun setUse24h(v: Boolean) = viewModelScope.launch { repo.setUse24h(v) }
-    fun setShowSeconds(v: Boolean) = viewModelScope.launch { repo.setShowSeconds(v) }
     fun setPaused(v: Boolean) = viewModelScope.launch { repo.setPaused(v) }
     fun setAutoClean(days: Int) = viewModelScope.launch { repo.setAutoCleanDays(days) }
     fun setSoftBrightness(v: Boolean) = viewModelScope.launch { repo.setSoftBrightness(v) }
@@ -182,6 +181,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setWatermarkShowTime(v: Boolean) = viewModelScope.launch { repo.setWatermarkShowTime(v) }
     fun setWeatherCity(city: String) = viewModelScope.launch { repo.setWeatherCity(city) }
     fun setUseLocation(v: Boolean) = viewModelScope.launch { repo.setUseLocation(v) }
+    fun setThemeId(id: String) = viewModelScope.launch { repo.setThemeId(id) }
+    fun setIdleStartHour(hour: Int) = viewModelScope.launch { repo.setIdleStartHour(hour) }
+    fun setIdleInterval(sec: Int) = viewModelScope.launch { repo.setIdleInterval(sec) }
+
+    /** 双击时钟：按「自动 → 墨白 → 暖夜 → 青瓷 → 胶片 → 赛博」循环 */
+    fun cycleTheme() = viewModelScope.launch {
+        repo.setThemeId(com.lapseclock.ui.theme.Themes.nextChoice(settings.value.themeId).id)
+    }
 
     override fun onCleared() {
         capture.stop()
