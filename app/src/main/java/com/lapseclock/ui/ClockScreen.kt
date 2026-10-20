@@ -164,13 +164,22 @@ fun ClockScreen(
     }
 
     var shiftSeed by remember { mutableIntStateOf(0x9E3779B9.toInt()) }
+    var burnTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(120_000)
             shiftSeed = xorshift(shiftSeed)
+            burnTick++
         }
     }
     val (shiftX, shiftY) = antiBurnOffset(shiftSeed, settings.burnShiftLevel)
+
+    // 底边进度线不参与整屏随机游走——游走只属于时钟内容。它自己在 0/4/8dp 三档间
+    // 往返，复用同一个 tick 保证周期与游走一致。0→4→8→4→0 最大只跳 4dp，
+    // 比循环式（8→0 一次跳 8dp）视觉上更稳。
+    val lineBottomDp =
+        if (settings.burnShiftLevel < 0) 8f
+        else when (burnTick % 4) { 0 -> 0f; 1 -> 4f; 2 -> 8f; else -> 4f }
 
     val showUi = !sleeping || sleepPeek
 
@@ -225,11 +234,12 @@ fun ClockScreen(
                 },
             )
 
-            // 今日进度：一条细线，长度每分钟都在变，本身不可能烧屏
+            // 今日进度：一条细线，长度随时间推进。X 方向静止（贴底边满宽），
+            // Y 方向自己在 0/4/8dp 三档往返防烧屏，不跟随整屏随机游走
             DayProgressLine(
                 now = now,
                 theme = theme,
-                shiftX = shiftX,
+                bottomDp = lineBottomDp,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
 
@@ -305,21 +315,21 @@ fun ClockScreen(
     }
 }
 
-/** 今日进度细线：贴屏幕底边，长度 = 已过分钟 / 1440 */
+/** 今日进度细线：贴屏幕底边，长度 = 已过分钟 / 1440。
+ *  X 方向静止，防烧屏靠 bottomDp 在 0/4/8dp 三档间往返。 */
 @Composable
 private fun DayProgressLine(
     now: LocalDateTime,
     theme: ClockTheme,
-    shiftX: Dp,
+    bottomDp: Float,
     modifier: Modifier = Modifier,
 ) {
     val progress = (now.hour * 60 + now.minute) / 1440f
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .padding(bottom = 8.dp)
-            .height(4.dp)
-            .graphicsLayer { translationX = shiftX.toPx() },
+            .padding(bottom = bottomDp.dp)
+            .height(4.dp),
     ) {
         drawRect(color = theme.dim.copy(alpha = 0.2f), size = size)
         drawRect(
