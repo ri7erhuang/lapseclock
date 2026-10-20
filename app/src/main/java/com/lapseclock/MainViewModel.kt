@@ -182,8 +182,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setWeatherCity(city: String) = viewModelScope.launch { repo.setWeatherCity(city) }
     fun setUseLocation(v: Boolean) = viewModelScope.launch { repo.setUseLocation(v) }
     fun setThemeId(id: String) = viewModelScope.launch { repo.setThemeId(id) }
-    fun setIdleStartHour(hour: Int) = viewModelScope.launch { repo.setIdleStartHour(hour) }
-    fun setIdleInterval(sec: Int) = viewModelScope.launch { repo.setIdleInterval(sec) }
 
     /** 双击时钟：按「自动 → 墨白 → 暖夜 → 青瓷 → 胶片 → 赛博」循环 */
     fun cycleTheme() = viewModelScope.launch {

@@ -60,8 +60,6 @@ fun SettingsSheet(
     onSetWeatherCity: (String) -> Unit,
     onSetUseLocation: (Boolean) -> Unit,
     onSetThemeId: (String) -> Unit,
-    onSetIdleStartHour: (Int) -> Unit,
-    onSetIdleInterval: (Int) -> Unit,
 ) {
     val stats = remember { runCatching {
         Triple(store.countToday(), store.totalCount(), store.totalBytes())
@@ -158,25 +156,6 @@ fun SettingsSheet(
                 text = "休眠时段 22:00–08:00：自动暂停拍照，屏幕纯黑（防烧屏）；点按屏幕可临时查看时间。\n" +
                     "时钟右上角 🌙 可随时手动进入休眠，休眠中轻点屏幕后点 ☀ 退出。\n" +
                     "建议系统亮度不超过 50%，并保持柔和亮度开启。",
-                color = panelDim,
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-            )
-
-            SectionTitle("闲时降频")
-            OptionRow(
-                options = listOf("关闭" to 0, "18 点" to 18, "19 点" to 19, "20 点" to 20),
-                selected = settings.idleStartHour,
-                onSelect = onSetIdleStartHour,
-            )
-            OptionRow(
-                options = listOf("2 分钟" to 120, "5 分钟" to 300, "10 分钟" to 600),
-                selected = settings.idleIntervalSec,
-                onSelect = onSetIdleInterval,
-            )
-            Text(
-                text = "下班后空办公室的画面没有变化，继续按常规间隔拍纯属浪费空间。" +
-                    "到设定时间后自动放宽拍摄间隔，第二天继续按常规间隔拍。",
                 color = panelDim,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,

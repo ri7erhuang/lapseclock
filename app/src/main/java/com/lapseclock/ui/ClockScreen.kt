@@ -494,9 +494,6 @@ private fun CaptureBadge(
                 color = theme.dim,
                 fontSize = 12.sp,
             )
-            if (status.idle && !sleeping) {
-                Text(text = "闲时 ${settings.idleIntervalSec}s", color = theme.accent, fontSize = 12.sp)
-            }
             if (status.skipped > 0) {
                 Text(text = "跳过 ${status.skipped}", color = theme.dim, fontSize = 12.sp)
             }

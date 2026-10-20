@@ -94,8 +94,6 @@ class MainActivity : ComponentActivity() {
                 onSetWeatherCity = { vm.setWeatherCity(it) },
                 onSetUseLocation = { vm.setUseLocation(it) },
                 onSetThemeId = { vm.setThemeId(it) },
-                onSetIdleStartHour = { vm.setIdleStartHour(it) },
-                onSetIdleInterval = { vm.setIdleInterval(it) },
                 store = vm.store,
                 onStartExport = { from, to, fps, w, h -> vm.export.start(from, to, fps, w, h) },
                 onCancelExport = { vm.export.cancel() },

@@ -50,8 +50,6 @@ fun LapseApp(
     onSetWeatherCity: (String) -> Unit,
     onSetUseLocation: (Boolean) -> Unit,
     onSetThemeId: (String) -> Unit,
-    onSetIdleStartHour: (Int) -> Unit,
-    onSetIdleInterval: (Int) -> Unit,
     store: PhotoStore,
     onStartExport: (LocalDate, LocalDate, Int, Int, Int) -> Unit,
     onCancelExport: () -> Unit,
@@ -114,8 +112,6 @@ fun LapseApp(
                 onSetWeatherCity = onSetWeatherCity,
                 onSetUseLocation = onSetUseLocation,
                 onSetThemeId = onSetThemeId,
-                onSetIdleStartHour = onSetIdleStartHour,
-                onSetIdleInterval = onSetIdleInterval,
             )
 
             Screen.Export -> ExportScreen(
