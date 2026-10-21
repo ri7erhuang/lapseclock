@@ -1,8 +1,6 @@
 package com.lapseclock.ui
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +24,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -35,8 +32,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -87,8 +82,11 @@ fun InfoScreen(
     }
 
     var data by remember { mutableStateOf<Overview?>(null) }
-    LaunchedEffect(Unit) {
+    // 拍照/清理会更新 lastShotAt 与 totalCount；第二屏停留在前台时也要跟着刷新，
+    // 否则「今日/累计」会一直是进入这一屏时的旧数字
+    LaunchedEffect(status.lastShotAt, status.totalCount) {
         data = withContext(Dispatchers.IO) {
+            store.ensureIndex()
             val (total, bytes, days) = store.overview()
             Overview(total, bytes, days, store.recentDayStats(14))
         }
@@ -176,7 +174,8 @@ private fun SummaryColumn(
     now: LocalDateTime,
     modifier: Modifier = Modifier,
 ) {
-    val todayStat = overview.recent.firstOrNull()
+    // recent 只包含有照片的日期；今天没拍时不能拿昨天的时间段冒充「今日」
+    val todayStat = overview.recent.firstOrNull { it.date == LocalDate.now() }
     val todaySpan = if (todayStat != null && todayStat.count > 1) {
         "${todayStat.firstTime} — ${todayStat.lastTime}"
     } else {
@@ -265,9 +264,9 @@ private fun TrendColumn(
     modifier: Modifier = Modifier,
 ) {
     val byDate = remember(recent) { recent.associateBy { it.date } }
-    val today = remember { LocalDate.now() }
+    val today = LocalDate.now()
     // 补齐没有拍摄的日期，否则柱状图的时间轴会被压缩，看不出「哪几天断了」
-    val series = remember(recent) {
+    val series = remember(recent, today) {
         (DAYS - 1 downTo 0).map { offset ->
             val d = today.minusDays(offset.toLong())
             d to (byDate[d]?.count ?: 0)
@@ -353,32 +352,17 @@ private fun FrameCard(
     theme: ClockTheme,
     modifier: Modifier = Modifier,
 ) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, file) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                val options = BitmapFactory.Options().apply { inSampleSize = 8 }
-                BitmapFactory.decodeFile(file.absolutePath, options)?.asImageBitmap()
-            }.getOrNull()
-        }
-    }
-
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Box(
+        PhotoImage(
+            file = file,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(4f / 3f)
                 .background(Color(0xFF141414), RoundedCornerShape(6.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            bitmap?.let {
-                Image(
-                    bitmap = it,
-                    contentDescription = label,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            }
-        }
+            contentScale = ContentScale.Crop,
+            maxWidth = 640,
+            maxHeight = 640,
+        )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, color = theme.accent, fontSize = 11.sp)
             Text(time, color = theme.dim, fontSize = 11.sp)

@@ -42,7 +42,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lapseclock.capture.PhotoStore
 import com.lapseclock.video.ExportState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -63,44 +65,81 @@ fun ExportScreen(
     onDismiss: () -> Unit,
     onStart: (LocalDate, LocalDate, Int, Int, Int) -> Unit,
     onCancel: () -> Unit,
+    onReset: () -> Unit,
 ) {
-    val context = LocalContext.current
-    var refresh by remember { mutableIntStateOf(0) }
-    val dates = remember(refresh) { store.dates() }
-
-    if (dates.isEmpty()) {
-        EmptyState(onDismiss)
-        return
+    // 日期列表在 IO 线程读索引，不阻塞 UI；加载完成前不提前 return，避免 Compose 组结构变化
+    var dates by remember { mutableStateOf<List<LocalDate>?>(null) }
+    LaunchedEffect(Unit) {
+        dates = withContext(Dispatchers.IO) {
+            store.ensureIndex()
+            store.dates()
+        }
     }
 
-    var from by remember(refresh) { mutableStateOf(dates.first()) }
-    var to by remember(refresh) { mutableStateOf(dates.last()) }
+    Box(modifier = Modifier.fillMaxSize().background(expBg)) {
+        when (val loaded = dates) {
+            null -> LoadingState()
+            else -> if (loaded.isEmpty()) {
+                EmptyState(onDismiss)
+            } else {
+                ExportContent(
+                    store = store,
+                    dates = loaded,
+                    state = state,
+                    onDismiss = onDismiss,
+                    onStart = onStart,
+                    onCancel = onCancel,
+                    onReset = onReset,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExportContent(
+    store: PhotoStore,
+    dates: List<LocalDate>,
+    state: ExportState,
+    onDismiss: () -> Unit,
+    onStart: (LocalDate, LocalDate, Int, Int, Int) -> Unit,
+    onCancel: () -> Unit,
+    onReset: () -> Unit,
+) {
+    val context = LocalContext.current
+
+    var from by remember(dates) { mutableStateOf(dates.first()) }
+    var to by remember(dates) { mutableStateOf(dates.last()) }
     var fps by remember { mutableStateOf(30) }
     var outWidth by remember { mutableStateOf(1920) }
     var outHeight by remember { mutableStateOf(1080) }
 
-    if (from < dates.first()) from = dates.first()
-    if (to > dates.last()) to = dates.last()
-    val realFrom = if (from.isAfter(to)) to else from
-    val realTo = if (from.isAfter(to)) from else to
+    // 用局部夹取代替「组合期写 state」：dates 变化（如清理掉最旧一天）时
+    // from/to 可能越界，这里只夹取用于计算，不触发额外重组
+    val minDate = dates.first()
+    val maxDate = dates.last()
+    val clampedFrom = from.coerceIn(minDate, maxDate)
+    val clampedTo = to.coerceIn(minDate, maxDate)
+    val realFrom = if (clampedFrom.isAfter(clampedTo)) clampedTo else clampedFrom
+    val realTo = if (clampedFrom.isAfter(clampedTo)) clampedFrom else clampedTo
 
+    // 导出过程中不刷新；空闲时每 2 秒补一次，今天新拍的片子能立刻算进去
     var liveTick by remember { mutableIntStateOf(0) }
     val estimating = state !is ExportState.Running
-    LaunchedEffect(estimating, refresh, realFrom, realTo) {
+    LaunchedEffect(estimating, realFrom, realTo) {
         while (estimating) {
             liveTick++
             delay(2000)
         }
     }
-    val selectedFrames = remember(refresh, realFrom, realTo, liveTick) {
-        store.filesBetweenInclusive(realFrom, realTo).size
+    val selectedFrames = remember(liveTick, realFrom, realTo) {
+        store.countBetween(realFrom, realTo)
     }
     val estimateSec = if (fps > 0) selectedFrames.toFloat() / fps else 0f
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(expBg)
             .padding(horizontal = 20.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -118,8 +157,8 @@ fun ExportScreen(
         ) {
             SectionLabel("日期范围")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DatePickerButton(store, "起 " + realFrom.format(chipFmt), dates, realFrom) { from = it }
-                DatePickerButton(store, "止 " + realTo.format(chipFmt), dates, realTo) { to = it }
+                DatePickerButton(store, "起 " + realFrom.format(chipFmt), dates) { from = it }
+                DatePickerButton(store, "止 " + realTo.format(chipFmt), dates) { to = it }
                 OutlineChip("全部") {
                     from = dates.first()
                     to = dates.last()
@@ -159,37 +198,46 @@ fun ExportScreen(
                 }
 
                 is ExportState.Running -> {
-                    LinearProgressIndicator(
-                        progress = state.progress,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp),
-                        color = expAccent,
-                        trackColor = Color(0xFF1C1C1C),
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(
-                            text = "编码中 ${state.done}/${state.total}",
-                            color = expDim,
-                            fontSize = 13.sp,
+                    if (state.total <= 0) {
+                        Text("正在读取照片…", color = expDim, fontSize = 13.sp)
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { state.progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp),
+                            color = expAccent,
+                            trackColor = Color(0xFF1C1C1C),
                         )
-                        Text(
-                            text = "点击取消",
-                            color = expErr,
-                            fontSize = 13.sp,
-                            modifier = Modifier.clickable { onCancel() },
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = "编码中 ${state.done}/${state.total}",
+                                color = expDim,
+                                fontSize = 13.sp,
+                            )
+                            Text(
+                                text = "点击取消",
+                                color = expErr,
+                                fontSize = 13.sp,
+                                modifier = Modifier.clickable { onCancel() },
+                            )
+                        }
                     }
                 }
 
                 is ExportState.Done -> {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            text = "✓ 已保存到相册 Movies/Timelapse · " +
-                                "${state.frames} 帧 · ${formatDuration(state.durationMs / 1000f)}",
+                            text = if (state.auto) {
+                                "✓ 昨日延时已自动合成 · ${state.from} · ${state.frames} 帧 · " +
+                                    formatDuration(state.durationMs / 1000f)
+                            } else {
+                                "✓ 已保存到相册 Movies/Timelapse · ${state.frames} 帧 · " +
+                                    formatDuration(state.durationMs / 1000f)
+                            },
                             color = expOk,
                             fontSize = 14.sp,
                         )
@@ -220,6 +268,10 @@ fun ExportScreen(
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1C1C1C)),
                             ) { Text("分享", color = expText) }
+
+                            OutlinedButton(onClick = onReset) {
+                                Text("再合成一次", color = expText)
+                            }
                         }
                     }
                 }
@@ -245,11 +297,17 @@ fun ExportScreen(
 }
 
 @Composable
+private fun LoadingState() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text("正在读取照片…", color = expDim, fontSize = 14.sp)
+    }
+}
+
+@Composable
 private fun EmptyState(onDismiss: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(expBg)
             .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -270,7 +328,6 @@ private fun DatePickerButton(
     store: PhotoStore,
     label: String,
     dates: List<LocalDate>,
-    value: LocalDate,
     onSelect: (LocalDate) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }

@@ -10,7 +10,9 @@ import com.lapseclock.capture.PhotoStore
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.settings.SettingsRepo
 import com.lapseclock.gold.GoldRepo
+import com.lapseclock.video.AutoExportPolicy
 import com.lapseclock.video.ExportController
+import com.lapseclock.video.ExportState
 import com.lapseclock.weather.LocationProvider
 import com.lapseclock.weather.WeatherRepo
 import com.lapseclock.weather.WeatherUi
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -26,12 +29,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import android.os.Environment
+import java.time.LocalDate
 
 enum class Screen { Clock, Settings, Export }
 
 /** rising：与上一次抓取相比的涨跌，null 表示无对比（首次或持平） */
 data class GoldUi(val price: String, val rising: Boolean?)
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val repo = SettingsRepo(app)
@@ -108,6 +113,86 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 自动合成失败后的退避，避免每分钟重试 */
+    private var autoExportRetryAfter = 0L
+
+    init {
+        // 启动时后台建一次照片索引；之后拍照/清理都增量维护，界面查询不再扫目录
+        viewModelScope.launch { store.ensureIndex() }
+
+        // 每分钟检查：昨天的照片是否已经自动合成过
+        viewModelScope.launch {
+            while (true) {
+                try {
+                    maybeAutoExport()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    // 一次检查失败不能让自动合成永远停摆
+                    android.util.Log.w("LapseClock", "自动合成检查失败: ${t.message}")
+                }
+                delay(60_000L)
+            }
+        }
+
+        // 自动合成成功后记下日期，避免同一天重复出片
+        viewModelScope.launch {
+            export.state.collect { st ->
+                if (st is ExportState.Done && st.auto) {
+                    try {
+                        repo.setLastAutoExportDate(st.to.toString())
+                    } catch (t: Throwable) {
+                        android.util.Log.w("LapseClock", "记录自动合成日期失败: ${t.message}")
+                    }
+                    android.util.Log.i(
+                        "LapseClock",
+                        "自动合成完成: ${st.from}..${st.to} ${st.frames} 帧",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 休眠结束后的第一次检查会把昨天的照片合成成片：
+     * 昨天有照片、今天还没出过、当前不在休眠/导出中，就自动跑一次。
+     * 编码参数与手动导出默认值一致（30fps / 1080p）。
+     */
+    private suspend fun maybeAutoExport() {
+        // 直接读 DataStore 的首个真实值：settings StateFlow 的初始值只是默认配置，
+        // 若在磁盘读完前检查，可能把用户关掉的自动合成又跑起来
+        val s = repo.settings.first()
+        val yesterday = LocalDate.now().minusDays(1)
+        store.ensureIndex()
+        val shouldRun = AutoExportPolicy.shouldRun(
+            enabled = s.autoExport,
+            sleeping = isSleeping(s.manualSleep, s.autoSleepSnoozeNight),
+            exporting = export.state.value is ExportState.Running,
+            lastAutoExportDate = s.lastAutoExportDate,
+            yesterday = yesterday,
+            yesterdayCount = store.countOn(yesterday),
+            nowMillis = System.currentTimeMillis(),
+            retryAfterMillis = autoExportRetryAfter,
+        )
+        if (!shouldRun) return
+
+        if (store.freeBytes() < AutoExportPolicy.MIN_FREE_BYTES) {
+            android.util.Log.w("LapseClock", "自动合成跳过：剩余空间不足")
+            autoExportRetryAfter = System.currentTimeMillis() + AutoExportPolicy.RETRY_MS
+            return
+        }
+
+        autoExportRetryAfter = System.currentTimeMillis() + AutoExportPolicy.RETRY_MS
+        export.start(
+            from = yesterday,
+            to = yesterday,
+            fps = AutoExportPolicy.FPS,
+            width = AutoExportPolicy.WIDTH,
+            height = AutoExportPolicy.HEIGHT,
+            auto = true,
+        )
+    }
+
     private suspend fun refreshGold() {
         runCatching { withTimeout(20_000L) { GoldRepo.fetchPrice() } }
             .onSuccess { newPrice ->
@@ -132,7 +217,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun refreshWeather() {
         // 未配置和风天气（local.properties 缺 key/host）时直接跳过，避免每 5 分钟刷一次必然失败的请求
         if (!weatherConfigured) return
-        val s = settings.value
+        // 读磁盘上的真实值：settings StateFlow 的初始值只是默认配置，
+        // 在磁盘读完前用它可能按默认的「开启定位」多发一次请求
+        val s = repo.settings.first()
         val fallbackCity = s.weatherCity.trim()
         weatherMutex.withLock {
             var result: WeatherUi? = null
@@ -182,6 +269,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setWeatherCity(city: String) = viewModelScope.launch { repo.setWeatherCity(city) }
     fun setUseLocation(v: Boolean) = viewModelScope.launch { repo.setUseLocation(v) }
     fun setThemeId(id: String) = viewModelScope.launch { repo.setThemeId(id) }
+    fun setAutoExport(v: Boolean) = viewModelScope.launch { repo.setAutoExport(v) }
+
+    /** 设置页「立即拍一张」：手动试拍，不打断定时时刻表 */
+    fun captureNow() = viewModelScope.launch { capture.shootNow() }
 
     /** 双击时钟：按「自动 → 墨白 → 暖夜 → 青瓷 → 胶片 → 赛博」循环 */
     fun cycleTheme() = viewModelScope.launch {

@@ -76,12 +76,16 @@ class TimelapseEncoder(
             for (file in files) {
                 if (isCancelled()) break
                 val bitmap = decodeForSize(file) ?: continue
-                val inAspect = bitmap.width.toFloat() / bitmap.height
-                val outAspect = outWidth.toFloat() / outHeight
-                val scaleX = if (inAspect > outAspect) outAspect / inAspect else 1f
-                val scaleY = if (inAspect < outAspect) inAspect / outAspect else 1f
-                drawFrame(bitmap, scaleX, scaleY, frames.toLong())
-                bitmap.recycle()
+                try {
+                    val inAspect = bitmap.width.toFloat() / bitmap.height
+                    val outAspect = outWidth.toFloat() / outHeight
+                    val scaleX = if (inAspect > outAspect) outAspect / inAspect else 1f
+                    val scaleY = if (inAspect < outAspect) inAspect / outAspect else 1f
+                    drawFrame(bitmap, scaleX, scaleY, frames.toLong())
+                } finally {
+                    // 单帧绘制抛异常时也要回收，下一帧还能继续或让 releaseAll 收尾
+                    bitmap.recycle()
+                }
                 drainEncoder(false, info)
                 frames++
                 onProgress(frames, files.size)
@@ -108,6 +112,11 @@ class TimelapseEncoder(
         while (bounds.outWidth / (sample * 2) >= outWidth &&
             bounds.outHeight / (sample * 2) >= outHeight
         ) {
+            sample *= 2
+        }
+        // 极端长宽比（如超宽全景）下，仅按两边缩放仍可能解出 20MP+ 的位图；
+        // 再压一道总像素上限，避免编码过程中 OOM
+        while ((bounds.outWidth / sample).toLong() * (bounds.outHeight / sample) > 8_000_000L) {
             sample *= 2
         }
 

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -25,28 +28,49 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.lapseclock.capture.CaptureStatus
 import com.lapseclock.capture.PhotoStore
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.ui.theme.Themes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Locale
 
 private val panelBg = Color(0xFF0B0B0B)
 private val panelText = Color(0xFFF2F2F2)
 private val panelDim = Color(0xFF8A8A8A)
 private val panelAccent = Color(0xFF2E6BFF)
+private val panelErr = Color(0xFFFF6B6B)
+
+private data class StoreStats(
+    val today: Int,
+    val total: Int,
+    val bytes: Long,
+    val free: Long,
+)
 
 @Composable
 fun SettingsSheet(
     settings: AppSettings,
+    status: CaptureStatus,
     store: PhotoStore,
     onDismiss: () -> Unit,
+    onTakeShot: () -> Unit,
     onSetInterval: (Int) -> Unit,
     onSetResolution: (Int, Int) -> Unit,
     onSetUse24h: (Boolean) -> Unit,
@@ -60,10 +84,28 @@ fun SettingsSheet(
     onSetWeatherCity: (String) -> Unit,
     onSetUseLocation: (Boolean) -> Unit,
     onSetThemeId: (String) -> Unit,
+    onSetAutoExport: (Boolean) -> Unit,
 ) {
-    val stats = remember { runCatching {
-        Triple(store.countToday(), store.totalCount(), store.totalBytes())
-    }.getOrDefault(Triple(0, 0, 0L)) }
+    var stats by remember { mutableStateOf<StoreStats?>(null) }
+    var latest by remember { mutableStateOf<File?>(null) }
+    var fullPreview by remember { mutableStateOf(false) }
+
+    // 索引查询是内存操作，但仍然放到 IO，避免首帧建索引卡在组合里
+    LaunchedEffect(status.lastShotAt, settings.autoCleanDays) {
+        stats = withContext(Dispatchers.IO) {
+            store.ensureIndex()
+            StoreStats(
+                today = store.countToday(),
+                total = store.totalCount(),
+                bytes = store.totalBytes(),
+                free = store.freeBytes(),
+            )
+        }
+        latest = withContext(Dispatchers.IO) {
+            store.ensureIndex()
+            store.latest()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -89,6 +131,51 @@ fun SettingsSheet(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
+            SectionTitle("取景 / 试拍")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PhotoImage(
+                    file = latest,
+                    modifier = Modifier
+                        .width(150.dp)
+                        .aspectRatio(4f / 3f)
+                        .background(Color(0xFF141414), RoundedCornerShape(8.dp))
+                        .clickable(enabled = latest != null) { fullPreview = true },
+                    contentScale = ContentScale.Crop,
+                    maxWidth = 480,
+                    maxHeight = 480,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "无预览拍照，装好之前先拍一张确认取景。",
+                        color = panelDim,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                    )
+                    Button(
+                        onClick = onTakeShot,
+                        enabled = !status.storageLow,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = panelAccent,
+                            disabledContainerColor = Color(0xFF1C1C1C),
+                        ),
+                    ) {
+                        Text("立即拍一张", color = Color.White, fontSize = 13.sp)
+                    }
+                    Text(
+                        text = latest?.let { "最近一张 ${storeTimeLabel(it)} · 点图放大" } ?: "还没有照片",
+                        color = panelDim,
+                        fontSize = 11.sp,
+                    )
+                }
+            }
+            status.lastError?.let {
+                Text(text = it, color = panelErr, fontSize = 12.sp, lineHeight = 18.sp)
+            }
+
             SectionTitle("拍照间隔")
             OptionRow(
                 options = listOf("2s" to 2, "5s" to 5, "10s" to 10, "15s" to 15, "30s" to 30, "60s" to 60),
@@ -223,18 +310,82 @@ fun SettingsSheet(
                 onSelect = onSetAutoClean,
             )
 
-            SectionTitle("存储")
+            SectionTitle("自动合成")
+            SwitchRow("每天自动合成昨日", settings.autoExport, onSetAutoExport)
             Text(
-                text = "今日 ${stats.first} 张 · ${formatBytes(stats.third)}\n" +
-                    "累计 ${stats.second} 张\n" +
-                    "目录 ${store.capturesDir().absolutePath}",
+                text = "休眠结束后自动把昨天的照片合成 30fps / 1080p 视频并写入相册；" +
+                    "失败会隔 30 分钟重试。上次自动合成：" +
+                    settings.lastAutoExportDate.ifBlank { "—" },
                 color = panelDim,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
             )
 
+            SectionTitle("存储")
+            val s = stats
+            Text(
+                text = if (s == null) {
+                    "统计中…"
+                } else {
+                    "今日 ${s.today} 张 · ${formatBytes(s.bytes)}\n" +
+                        "累计 ${s.total} 张\n" +
+                        "剩余空间 ${formatBytes(s.free)}\n" +
+                        "目录 ${store.capturesDir().absolutePath}"
+                },
+                color = if (status.storageLow) panelErr else panelDim,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+            )
+            if (status.storageLow) {
+                Text(
+                    text = "存储空间不足，拍照已暂停；清理旧照片或释放空间后会自动恢复。",
+                    color = panelErr,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                )
+            }
+
             Spacer(modifier = Modifier.height(40.dp))
         }
+    }
+
+    if (fullPreview && latest != null) {
+        Dialog(
+            onDismissRequest = { fullPreview = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { fullPreview = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                PhotoImage(
+                    file = latest,
+                    modifier = Modifier.fillMaxSize().padding(12.dp),
+                    contentScale = ContentScale.Fit,
+                    maxWidth = 2048,
+                    maxHeight = 2048,
+                )
+                Text(
+                    text = "点按关闭",
+                    color = Color(0xFF8A8A8A),
+                    fontSize = 11.sp,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 文件名里的 HH:mm，比文件修改时间更接近拍摄时刻 */
+private fun storeTimeLabel(file: File): String {
+    val raw = file.name.removePrefix("capture_")
+    return try {
+        raw.substring(9, 11) + ":" + raw.substring(11, 13)
+    } catch (_: Exception) {
+        ""
     }
 }
 

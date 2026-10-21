@@ -35,6 +35,7 @@ fun LapseApp(
     onOpenExport: () -> Unit,
     onEnterSleep: () -> Unit,
     onWakeUp: () -> Unit,
+    onTakeShot: () -> Unit,
     onCycleTheme: () -> Unit,
     onBack: () -> Unit,
     onSetInterval: (Int) -> Unit,
@@ -50,9 +51,11 @@ fun LapseApp(
     onSetWeatherCity: (String) -> Unit,
     onSetUseLocation: (Boolean) -> Unit,
     onSetThemeId: (String) -> Unit,
+    onSetAutoExport: (Boolean) -> Unit,
     store: PhotoStore,
     onStartExport: (LocalDate, LocalDate, Int, Int, Int) -> Unit,
     onCancelExport: () -> Unit,
+    onResetExport: () -> Unit,
 ) {
     // 第二屏只是时钟的一个「页」，不进 Screen 枚举——它不改变 App 的导航状态
     var infoOpen by remember { mutableStateOf(false) }
@@ -69,20 +72,24 @@ fun LapseApp(
             if (infoOpen) infoOpen = false else onBack()
         }
 
-        ClockScreen(
-            settings = settings,
-            status = status,
-            permissionNeeded = permissionNeeded,
-            onRequestPermission = onRequestPermission,
-            onOpenSettings = onOpenSettings,
-            onOpenExport = onOpenExport,
-            onEnterSleep = onEnterSleep,
-            onWakeUp = onWakeUp,
-            onCycleTheme = onCycleTheme,
-            onSwipeLeft = { infoOpen = true },
-            weather = weather,
-            gold = gold,
-        )
+        // 只在时钟真正露出时组合它：设置/合成/数据屏是整屏不透明覆盖层，
+        // 若时钟仍在下面，既会每秒空转重组，手势也可能穿透到被盖住的时钟上
+        if (screen == Screen.Clock && !infoOpen) {
+            ClockScreen(
+                settings = settings,
+                status = status,
+                permissionNeeded = permissionNeeded,
+                onRequestPermission = onRequestPermission,
+                onOpenSettings = onOpenSettings,
+                onOpenExport = onOpenExport,
+                onEnterSleep = onEnterSleep,
+                onWakeUp = onWakeUp,
+                onCycleTheme = onCycleTheme,
+                onSwipeLeft = { infoOpen = true },
+                weather = weather,
+                gold = gold,
+            )
+        }
 
         if (infoOpen) {
             InfoScreen(
@@ -97,8 +104,10 @@ fun LapseApp(
         when (screen) {
             Screen.Settings -> SettingsSheet(
                 settings = settings,
+                status = status,
                 store = store,
                 onDismiss = onBack,
+                onTakeShot = onTakeShot,
                 onSetInterval = onSetInterval,
                 onSetResolution = onSetResolution,
                 onSetUse24h = onSetUse24h,
@@ -112,6 +121,7 @@ fun LapseApp(
                 onSetWeatherCity = onSetWeatherCity,
                 onSetUseLocation = onSetUseLocation,
                 onSetThemeId = onSetThemeId,
+                onSetAutoExport = onSetAutoExport,
             )
 
             Screen.Export -> ExportScreen(
@@ -120,6 +130,7 @@ fun LapseApp(
                 onDismiss = onBack,
                 onStart = onStartExport,
                 onCancel = onCancelExport,
+                onReset = onResetExport,
             )
 
             Screen.Clock -> Unit

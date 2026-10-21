@@ -186,7 +186,8 @@ fun ClockScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(theme.bg)
+            // 休眠时真正纯黑：主题底色（暖夜 #0C0906 等）仍会让 OLED 微微发光
+            .background(if (sleeping) Color.Black else theme.bg)
             .pointerInput(sleeping) {
                 detectTapGestures(
                     onTap = {
@@ -476,14 +477,16 @@ private fun CaptureBadge(
     val waitingCamera = !status.bound && !status.loopActive
     val dotColor = when {
         sleeping -> theme.dim.copy(alpha = 0.5f)
+        status.storageLow -> Color(0xFFFF6B6B)
+        settings.paused -> theme.dim
         status.lastError != null -> Color(0xFFFF6B6B)
         waitingCamera -> Color(0xFFFFC857)
-        settings.paused -> theme.dim
         status.loopActive -> Color(0xFF5BD97A)
         else -> Color(0xFFFFC857)
     }
     val stateLabel = when {
         sleeping -> "休眠中"
+        status.storageLow -> "存储不足"
         settings.paused -> "已暂停"
         status.lastError != null -> "出错"
         waitingCamera -> "等待相机"
@@ -504,6 +507,9 @@ private fun CaptureBadge(
                 color = theme.dim,
                 fontSize = 12.sp,
             )
+            if (status.storageLow) {
+                Text(text = "剩 ${formatBytes(status.freeBytes)}", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+            }
             if (status.skipped > 0) {
                 Text(text = "跳过 ${status.skipped}", color = theme.dim, fontSize = 12.sp)
             }
