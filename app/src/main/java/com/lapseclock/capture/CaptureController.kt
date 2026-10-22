@@ -207,9 +207,6 @@ class CaptureController(
                     continue
                 }
 
-                // 自动清理：每天（或保留天数变化后）最多跑一次，不再每拍一张扫一遍目录
-                maintainCleanup(s)
-
                 // 存储不足时停拍并释放相机，等空间恢复后自动继续；拍照循环不空转
                 val free = store.freeBytes()
                 if (free < MIN_FREE_BYTES) {
@@ -327,29 +324,6 @@ class CaptureController(
 
                 if (!ok) delay(intervalMs.coerceAtMost(3000L))
             }
-        }
-    }
-
-    /** 每天最多清理一次；用「日期:保留天数」做标记，改了保留天数会立刻重跑一次 */
-    private suspend fun maintainCleanup(s: AppSettings) {
-        if (s.autoCleanDays <= 0) return
-        val mark = "${LocalDate.now()}:${s.autoCleanDays}"
-        if (s.lastCleanMark == mark) return
-        try {
-            val removed = withContext(Dispatchers.IO) {
-                store.ensureIndex()
-                store.deleteOlderThan(s.autoCleanDays)
-            }
-            repo.setLastCleanMark(mark)
-            if (removed > 0) {
-                android.util.Log.i("LapseClock", "自动清理: $removed 张")
-                refreshCounts()
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (t: Throwable) {
-            // 清理失败不能把拍照循环带崩；明天/下次改设置会再试
-            android.util.Log.w("LapseClock", "自动清理失败: ${t.message}")
         }
     }
 
@@ -477,6 +451,9 @@ class CaptureController(
             bmp.recycle()
         }
     }
+
+    /** 外部改动了照片目录（如合成后删除源照片）时，让角标立刻重新统计，不必等到下一次拍照 */
+    suspend fun refreshCountsNow() = refreshCounts()
 
     private suspend fun refreshCounts() {
         // 索引只在启动时扫一次目录，之后 counts() 是 O(1)；仍放 IO，避免首次建索引卡住主线程

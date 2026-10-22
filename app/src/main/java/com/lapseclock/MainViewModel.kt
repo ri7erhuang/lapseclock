@@ -16,6 +16,7 @@ import com.lapseclock.video.ExportState
 import com.lapseclock.weather.LocationProvider
 import com.lapseclock.weather.WeatherRepo
 import com.lapseclock.weather.WeatherUi
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import android.os.Environment
 import java.time.LocalDate
@@ -140,13 +142,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             export.state.collect { st ->
                 if (st is ExportState.Done && st.auto) {
                     try {
-                        repo.setLastAutoExportDate(st.to.toString())
+                        repo.setLastAutoExportDate(st.dates.last().toString())
                     } catch (t: Throwable) {
                         android.util.Log.w("LapseClock", "记录自动合成日期失败: ${t.message}")
                     }
                     android.util.Log.i(
                         "LapseClock",
-                        "自动合成完成: ${st.from}..${st.to} ${st.frames} 帧",
+                        "自动合成完成: ${st.dates.first()} ${st.frames} 帧",
                     )
                 }
             }
@@ -184,8 +186,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         autoExportRetryAfter = System.currentTimeMillis() + AutoExportPolicy.RETRY_MS
         export.start(
-            from = yesterday,
-            to = yesterday,
+            dates = listOf(yesterday),
             fps = AutoExportPolicy.FPS,
             width = AutoExportPolicy.WIDTH,
             height = AutoExportPolicy.HEIGHT,
@@ -260,7 +261,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setResolution(w: Int, h: Int) = viewModelScope.launch { repo.setResolution(w, h) }
     fun setUse24h(v: Boolean) = viewModelScope.launch { repo.setUse24h(v) }
     fun setPaused(v: Boolean) = viewModelScope.launch { repo.setPaused(v) }
-    fun setAutoClean(days: Int) = viewModelScope.launch { repo.setAutoCleanDays(days) }
     fun setSoftBrightness(v: Boolean) = viewModelScope.launch { repo.setSoftBrightness(v) }
     fun setBurnShiftLevel(level: Int) = viewModelScope.launch { repo.setBurnShiftLevel(level) }
     fun setWatermarkEnabled(v: Boolean) = viewModelScope.launch { repo.setWatermarkEnabled(v) }
@@ -270,6 +270,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setUseLocation(v: Boolean) = viewModelScope.launch { repo.setUseLocation(v) }
     fun setThemeId(id: String) = viewModelScope.launch { repo.setThemeId(id) }
     fun setAutoExport(v: Boolean) = viewModelScope.launch { repo.setAutoExport(v) }
+
+    /**
+     * 合成结束后由用户在弹窗里确认，删除这些日期的源照片。
+     * 只删用户明确选中的日期，不做任何"顺手清理"。
+     */
+    fun deleteSourcePhotos(dates: Collection<LocalDate>) = viewModelScope.launch {
+        if (dates.isEmpty()) return@launch
+        val removed = runCatching {
+            withContext(Dispatchers.IO) { store.deleteDates(dates) }
+        }.onFailure {
+            android.util.Log.w("LapseClock", "删除源照片失败: ${it.message}")
+        }.getOrDefault(0)
+        if (removed > 0) {
+            android.util.Log.i("LapseClock", "已删除 ${dates.size} 天的源照片 $removed 张")
+            runCatching { capture.refreshCountsNow() }
+        }
+    }
 
     /** 设置页「立即拍一张」：手动试拍，不打断定时时刻表 */
     fun captureNow() = viewModelScope.launch { capture.shootNow() }

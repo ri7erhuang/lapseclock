@@ -72,23 +72,25 @@ class PhotoStoreTest {
     }
 
     @Test
-    fun `deleteOlderThan removes only full days before the cutoff`() = runBlocking {
+    fun `deleteDates removes only the selected days`() = runBlocking {
         val today = LocalDate.now()
-        val oldDate = today.minusDays(5)
-        val keepDate = today.minusDays(2)
-        val old = addPhoto(oldDate, "10:00")
-        val keep = addPhoto(keepDate, "10:00")
+        val first = today.minusDays(5)
+        val second = today.minusDays(2)
+        val firstFile = addPhoto(first, "10:00")
+        val secondFile = addPhoto(second, "10:00")
         addPhoto(today, "10:00")
 
         store.ensureIndex()
-        assertEquals(1, store.deleteOlderThan(3))
+        // 跳着选：只删 first，中间的 second 必须原样保留
+        assertEquals(1, store.deleteDates(listOf(first)))
 
-        assertFalse(old.exists())
-        assertTrue(keep.exists())
-        assertEquals(0, store.countOn(oldDate))
+        assertFalse(firstFile.exists())
+        assertTrue(secondFile.exists())
+        assertEquals(0, store.countOn(first))
+        assertEquals(1, store.countOn(second))
         assertEquals(2, store.totalCount())
         assertEquals(2, store.dates().size)
-        assertEquals(0, store.deleteOlderThan(0))
+        assertEquals(0, store.deleteDates(emptyList()))
     }
 
     @Test

@@ -120,6 +120,13 @@ class PhotoStore(rootDir: File) {
         index?.byDate?.keys?.toList() ?: emptyList()
     }
 
+    /** 每个有照片的日期及其张数，老的在前；合成页用它渲染可选日期 */
+    data class DayCount(val date: LocalDate, val count: Int)
+
+    fun dayCounts(): List<DayCount> = synchronized(lock) {
+        index?.byDate?.map { (date, files) -> DayCount(date, files.size) } ?: emptyList()
+    }
+
     data class Counts(val today: Int, val total: Int)
 
     /** O(1)：今日张数 + 累计张数 */
@@ -157,24 +164,42 @@ class PhotoStore(rootDir: File) {
         }
     }
 
+    /**
+     * 指定日期的全部照片，按日期、再按文件名（即拍摄时刻）排序。
+     * 用户可以在合成页跳着选日期，所以不能退化成 from/to 闭区间。
+     */
+    fun filesForDates(dates: Collection<LocalDate>): List<File> = synchronized(lock) {
+        val idx = index ?: return emptyList()
+        buildList {
+            for (date in dates.distinct().sorted()) {
+                idx.byDate[date]?.forEach { add(it.file) }
+            }
+        }
+    }
+
+    /** 指定日期的总张数，用于合成页显示「已选 N 张」 */
+    fun countForDates(dates: Collection<LocalDate>): Int = synchronized(lock) {
+        val idx = index ?: return 0
+        dates.distinct().sumOf { idx.byDate[it]?.size ?: 0 }
+    }
+
     /** 最近一张照片，用于试拍预览 */
     fun latest(): File? = synchronized(lock) {
         index?.byDate?.lastEntry()?.value?.lastOrNull()?.file
     }
 
     /**
-     * 删除 N 天前（不含当天）的旧照片，返回删除数量。
-     * 纯内存索引 + 文件删除，放在 IO 线程调用。
+     * 删除指定日期的全部照片，返回删除数量。
+     * 合成结束后由用户确认才调用，所以这里按「用户选中的日期集合」删，
+     * 不能退化成 from/to 闭区间——用户可能跳着选日期。
      */
-    fun deleteOlderThan(days: Int): Int {
-        if (days <= 0) return 0
+    fun deleteDates(dates: Collection<LocalDate>): Int {
+        if (dates.isEmpty()) return 0
+        val targets = dates.toHashSet()
         val victims = ArrayList<Entry>()
         synchronized(lock) {
             val idx = index ?: return 0
-            // 「保留 7 天」= 今天加前 6 天，共 7 个自然日
-            val cutoff = LocalDate.now().minusDays((days - 1).toLong())
-            val old = idx.byDate.headMap(cutoff, false)
-            for (date in old.keys.toList()) {
+            for (date in targets) {
                 val list = idx.byDate.remove(date) ?: continue
                 victims.addAll(list)
             }
@@ -190,6 +215,7 @@ class PhotoStore(rootDir: File) {
         for (e in victims) {
             if (e.file.delete()) removed++ else failed.add(e)
         }
+        // 删不掉的文件（被占用等）放回索引，否则索引会和磁盘对不上
         if (failed.isNotEmpty()) {
             synchronized(lock) {
                 index?.let { idx -> failed.forEach { idx.add(it) } }

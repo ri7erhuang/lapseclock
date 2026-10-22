@@ -42,7 +42,6 @@ fun LapseApp(
     onSetResolution: (Int, Int) -> Unit,
     onSetUse24h: (Boolean) -> Unit,
     onSetPaused: (Boolean) -> Unit,
-    onSetAutoClean: (Int) -> Unit,
     onSetSoftBrightness: (Boolean) -> Unit,
     onSetBurnShiftLevel: (Int) -> Unit,
     onSetWatermarkEnabled: (Boolean) -> Unit,
@@ -53,9 +52,10 @@ fun LapseApp(
     onSetThemeId: (String) -> Unit,
     onSetAutoExport: (Boolean) -> Unit,
     store: PhotoStore,
-    onStartExport: (LocalDate, LocalDate, Int, Int, Int) -> Unit,
+    onStartExport: (Collection<LocalDate>, Int, Int, Int) -> Unit,
     onCancelExport: () -> Unit,
     onResetExport: () -> Unit,
+    onDeleteSources: (Collection<LocalDate>) -> Unit,
 ) {
     // 第二屏只是时钟的一个「页」，不进 Screen 枚举——它不改变 App 的导航状态
     var infoOpen by remember { mutableStateOf(false) }
@@ -112,7 +112,6 @@ fun LapseApp(
                 onSetResolution = onSetResolution,
                 onSetUse24h = onSetUse24h,
                 onSetPaused = onSetPaused,
-                onSetAutoClean = onSetAutoClean,
                 onSetSoftBrightness = onSetSoftBrightness,
                 onSetBurnShiftLevel = onSetBurnShiftLevel,
                 onSetWatermarkEnabled = onSetWatermarkEnabled,
@@ -131,6 +130,7 @@ fun LapseApp(
                 onStart = onStartExport,
                 onCancel = onCancelExport,
                 onReset = onResetExport,
+                onDeleteSources = onDeleteSources,
             )
 
             Screen.Clock -> Unit

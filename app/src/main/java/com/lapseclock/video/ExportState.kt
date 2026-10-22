@@ -30,8 +30,8 @@ sealed class ExportState {
         val uri: Uri,
         val durationMs: Long,
         val frames: Int,
-        val from: LocalDate,
-        val to: LocalDate,
+        /** 本次参与合成的日期，按时间升序；删除源照片时按这些日期删 */
+        val dates: List<LocalDate>,
         /** 每日自动合成，而不是用户手动点开始 */
         val auto: Boolean = false,
     ) : ExportState()
@@ -63,16 +63,20 @@ class ExportController(
     }
 
     fun start(
-        from: LocalDate,
-        to: LocalDate,
+        dates: Collection<LocalDate>,
         fps: Int,
         width: Int,
         height: Int,
         auto: Boolean = false,
     ) {
         if (job?.isActive == true) return
+        val sortedDates = dates.distinct().sorted()
+        if (sortedDates.isEmpty()) {
+            _state.value = ExportState.Failed("没有选择日期")
+            return
+        }
         cancelled.set(false)
-        // 取帧列表放到 IO；越大范围越不能卡在主线程
+        // 取帧列表放到 IO；选的天数越多越不能卡在主线程
         _state.value = ExportState.Running(0, 0)
 
         job = scope.launch {
@@ -80,17 +84,17 @@ class ExportController(
             try {
                 val files = withContext(Dispatchers.IO) {
                     store.ensureIndex()
-                    store.filesBetweenInclusive(from, to)
+                    store.filesForDates(sortedDates)
                 }
                 if (files.isEmpty()) {
-                    _state.value = ExportState.Failed("所选日期范围内没有照片")
+                    _state.value = ExportState.Failed("所选日期下没有照片")
                     return@launch
                 }
                 _state.value = ExportState.Running(0, files.size)
 
                 val frames = withContext(Dispatchers.IO) {
                     val dir = File(app.cacheDir, "export").apply { mkdirs() }
-                    val out = File(dir, timelapseOutputName(from, to, fps))
+                    val out = File(dir, timelapseOutputName(sortedDates, fps))
                     outFile = out
                     val enc = TimelapseEncoder(
                         files = files,
@@ -113,7 +117,7 @@ class ExportController(
                 val out = outFile!!
                 val durationMs = withContext(Dispatchers.IO) { readDurationMs(out) }
                 val uri = withContext(Dispatchers.IO) { publish(out) }
-                _state.value = ExportState.Done(uri, durationMs, frames, from, to, auto)
+                _state.value = ExportState.Done(uri, durationMs, frames, sortedDates, auto)
             } catch (t: Throwable) {
                 outFile?.delete()
                 _state.value = ExportState.Failed(t.message ?: t.toString())

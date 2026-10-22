@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lapseclock.capture.CaptureStatus
+import com.lapseclock.BuildConfig
 import com.lapseclock.capture.PhotoStore
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.ui.theme.Themes
@@ -75,7 +76,6 @@ fun SettingsSheet(
     onSetResolution: (Int, Int) -> Unit,
     onSetUse24h: (Boolean) -> Unit,
     onSetPaused: (Boolean) -> Unit,
-    onSetAutoClean: (Int) -> Unit,
     onSetSoftBrightness: (Boolean) -> Unit,
     onSetBurnShiftLevel: (Int) -> Unit,
     onSetWatermarkEnabled: (Boolean) -> Unit,
@@ -91,7 +91,7 @@ fun SettingsSheet(
     var fullPreview by remember { mutableStateOf(false) }
 
     // 索引查询是内存操作，但仍然放到 IO，避免首帧建索引卡在组合里
-    LaunchedEffect(status.lastShotAt, settings.autoCleanDays) {
+    LaunchedEffect(status.lastShotAt) {
         stats = withContext(Dispatchers.IO) {
             store.ensureIndex()
             StoreStats(
@@ -122,6 +122,12 @@ fun SettingsSheet(
                 color = panelText,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Medium,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "v${BuildConfig.VERSION_NAME}",
+                color = panelDim,
+                fontSize = 12.sp,
             )
         }
 
@@ -301,13 +307,6 @@ fun SettingsSheet(
                 color = panelDim,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
-            )
-
-            SectionTitle("自动清理")
-            OptionRow(
-                options = listOf("关闭" to 0, "7 天" to 7, "30 天" to 30, "90 天" to 90),
-                selected = settings.autoCleanDays,
-                onSelect = onSetAutoClean,
             )
 
             SectionTitle("自动合成")

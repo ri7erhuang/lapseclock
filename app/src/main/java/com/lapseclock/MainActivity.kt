@@ -86,7 +86,6 @@ class MainActivity : ComponentActivity() {
                 onSetResolution = { w, h -> vm.setResolution(w, h) },
                 onSetUse24h = { vm.setUse24h(it) },
                 onSetPaused = { vm.setPaused(it) },
-                onSetAutoClean = { vm.setAutoClean(it) },
                 onSetSoftBrightness = { vm.setSoftBrightness(it) },
                 onSetBurnShiftLevel = { vm.setBurnShiftLevel(it) },
                 onSetWatermarkEnabled = { vm.setWatermarkEnabled(it) },
@@ -97,9 +96,10 @@ class MainActivity : ComponentActivity() {
                 onSetThemeId = { vm.setThemeId(it) },
                 onSetAutoExport = { vm.setAutoExport(it) },
                 store = vm.store,
-                onStartExport = { from, to, fps, w, h -> vm.export.start(from, to, fps, w, h) },
+                onStartExport = { dates, fps, w, h -> vm.export.start(dates, fps, w, h) },
                 onCancelExport = { vm.export.cancel() },
                 onResetExport = { vm.export.reset() },
+                onDeleteSources = { vm.deleteSourcePhotos(it) },
             )
         }
     }
