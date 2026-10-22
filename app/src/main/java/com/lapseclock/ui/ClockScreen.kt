@@ -39,11 +39,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -53,6 +55,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,6 +84,9 @@ private fun xorshift(seed: Int): Int {
 /**
  * 防烧屏随机游走：按档位返回 dp 偏移。
  * 档位 -1=关闭，0=低 x±30/y±20，1=中 x±60/y±40，2=高 x±80/y±60
+ *
+ * 这里给的是「想要」的位移，实际位移还要由 [ClockFace] 按屏幕可用空白夹紧，
+ * 屏幕小的时候上下幅度会自动收窄，不会把时钟推到进度线或信息组上。
  */
 private fun antiBurnOffset(seed: Int, level: Int): Pair<Dp, Dp> {
     if (level < 0) return 0.dp to 0.dp
@@ -90,6 +96,21 @@ private fun antiBurnOffset(seed: Int, level: Int): Pair<Dp, Dp> {
     val ry = ((seed ushr 16) and 0xFFFF) / 65535f
     return ((rx - 0.5f) * 2f * maxX).dp to ((ry - 0.5f) * 2f * maxY).dp
 }
+
+/**
+ * 时钟内容不允许进入的保留带。
+ * 顶部留给左上信息组（天气/积存金），底部留给今日进度线和双击切皮肤的名牌，
+ * 时钟随机游走时被这两个保留带夹住，不会压到它们上面。
+ */
+private val CLOCK_TOP_RESERVE = 40.dp
+private val CLOCK_BOTTOM_RESERVE = 46.dp
+
+/**
+ * 居中内容在一侧还能平移多少：先算出居中后该侧剩下的空白，再扣掉保留带。
+ * 内容比可用区域还大时返回 0，即锁死在居中位置。
+ */
+internal fun freeTravel(space: Dp, content: Dp, reserve: Dp): Dp =
+    ((space - content) / 2 - reserve).coerceAtLeast(0.dp)
 
 /**
  * 时钟主屏。
@@ -134,6 +155,8 @@ fun ClockScreen(
     }
     // 柔和亮度：把主色往黑里压一点，长时间盯着更舒服（不影响主题本身的色相）
     val mainColor = if (settings.softBrightness) lerp(theme.main, Color.Black, 0.16f) else theme.main
+    // 首位数字和冒号的强调色走同一档柔和处理，否则打开柔和亮度后会比其它数字更扎眼
+    val leadColor = if (settings.softBrightness) lerp(theme.lead, Color.Black, 0.16f) else theme.lead
 
     var sleepPeek by remember { mutableStateOf(false) }
     LaunchedEffect(sleeping, sleepPeek) {
@@ -225,6 +248,7 @@ fun ClockScreen(
                 now = now,
                 theme = theme,
                 mainColor = mainColor,
+                leadColor = leadColor,
                 shiftX = shiftX,
                 shiftY = shiftY,
                 use24h = settings.use24h,
@@ -345,6 +369,7 @@ private fun ClockFace(
     now: LocalDateTime,
     theme: ClockTheme,
     mainColor: Color,
+    leadColor: Color,
     shiftX: Dp,
     shiftY: Dp,
     use24h: Boolean,
@@ -358,6 +383,19 @@ private fun ClockFace(
         val bigSize = with(density) {
             minOf(maxWidth * 0.30f, maxHeight * 0.52f).toSp()
         }
+        // 防烧屏位移必须落在内容实际占位之外的空隙里，否则下移会压到底边进度线、
+        // 上移会压到左上信息组。幅度是随屏幕尺寸变化的量，只能按实测内容尺寸夹住，
+        // 不能拿 antiBurnOffset 里的固定 dp 直接当位移用。
+        var contentSize by remember { mutableStateOf(IntSize.Zero) }
+        val contentW = with(density) { contentSize.width.toDp() }
+        val contentH = with(density) { contentSize.height.toDp() }
+        // 首帧还没量到尺寸，先不位移，避免闪一下越界
+        val measured = contentSize != IntSize.Zero
+        val maxShiftX = freeTravel(maxWidth, contentW, 0.dp)
+        val maxShiftUp = freeTravel(maxHeight, contentH, CLOCK_TOP_RESERVE)
+        val maxShiftDown = freeTravel(maxHeight, contentH, CLOCK_BOTTOM_RESERVE)
+        val safeShiftX = if (measured) shiftX.coerceIn(-maxShiftX, maxShiftX) else 0.dp
+        val safeShiftY = if (measured) shiftY.coerceIn(-maxShiftUp, maxShiftDown) else 0.dp
         val hour = if (use24h) now.hour else ((now.hour + 11) % 12 + 1)
         val amPm = if (use24h) "" else if (now.hour < 12) "上午 " else "下午 "
         val twoDigit = String.format(Locale.getDefault(), "%02d", hour)
@@ -365,10 +403,12 @@ private fun ClockFace(
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.graphicsLayer {
-                translationX = shiftX.toPx()
-                translationY = shiftY.toPx()
-            },
+            modifier = Modifier
+                .onSizeChanged { contentSize = it }
+                .graphicsLayer {
+                    translationX = safeShiftX.toPx()
+                    translationY = safeShiftY.toPx()
+                },
         ) {
             // 每个数字占固定宽度的格位：系统默认字体的数字宽度随字形变化（vivo 尤甚），
             // 直接拼一个长字符串会导致整块时钟左右跳动。格位宽度取 0-9 中最宽的字形。
@@ -381,6 +421,13 @@ private fun ClockFace(
                     ('0'..'9').maxOf { measurer.measure(it.toString(), bigStyle).size.width }.toDp()
                 }
             }
+            // 分隔符不用「:」字形：字形自带的基线和左右边距会让它比数字低、且左右不对称，
+            // 各家系统字体（vivo 尤甚）差别还大。改成自己画两个圆点，位置全按字号算。
+            val digitBox = remember(bigStyle) { measurer.measure("0", bigStyle) }
+            val digitLineH = with(density) { digitBox.size.height.toDp() }
+            val digitBaselinePx = remember(digitBox) { digitBox.firstBaseline }
+            val fontPx = with(density) { bigSize.toPx() }
+            val colonSlotW = with(density) { (fontPx * COLON_SLOT_EM).toDp() }
 
             Row {
                 if (amPm.isNotEmpty()) {
@@ -394,14 +441,13 @@ private fun ClockFace(
                             .alignByBaseline(),
                     )
                 }
-                DigitRow(twoDigit, mainColor, bigSize, bigDigitW, theme.weight)
-                Text(
-                    text = ":",
-                    color = mainColor,
-                    fontSize = bigSize,
-                    fontWeight = theme.weight,
-                    letterSpacing = 2.sp,
-                    modifier = Modifier.alignByBaseline(),
+                DigitRow(twoDigit, mainColor, bigSize, bigDigitW, theme.weight, leadColor = leadColor)
+                ColonDots(
+                    color = leadColor,
+                    fontPx = fontPx,
+                    baselinePx = digitBaselinePx,
+                    slotWidth = colonSlotW,
+                    lineHeight = digitLineH,
                 )
                 DigitRow(minuteTwo, mainColor, bigSize, bigDigitW, theme.weight)
             }
@@ -449,11 +495,12 @@ private fun RowScope.DigitRow(
     fontSize: TextUnit,
     slotWidth: Dp,
     weight: FontWeight,
+    leadColor: Color = color,
 ) {
-    digits.forEach { ch ->
+    digits.forEachIndexed { index, ch ->
         Text(
             text = ch.toString(),
-            color = color,
+            color = if (index == 0) leadColor else color,
             fontSize = fontSize,
             fontWeight = weight,
             textAlign = TextAlign.Center,
@@ -463,6 +510,45 @@ private fun RowScope.DigitRow(
         )
     }
 }
+
+/**
+ * 时钟分隔符：两个圆点，不用「:」字形。
+ *
+ * 用字形时冒号的位置由字体决定——基线对齐后它的点坐在数字下半部，左右还带着字形的
+ * 边距，看起来既不居中又偏一侧；vivo 这类比例数字字体尤其明显。改成画点之后，
+ * 位置只跟字号有关：水平居中在自己的格位里，垂直对准数字的视觉中心（字高的中线）。
+ */
+@Composable
+private fun RowScope.ColonDots(
+    color: Color,
+    fontPx: Float,
+    baselinePx: Float,
+    slotWidth: Dp,
+    lineHeight: Dp,
+) {
+    Canvas(
+        modifier = Modifier
+            .align(Alignment.Top)
+            .width(slotWidth)
+            .height(lineHeight),
+    ) {
+        val cx = size.width / 2f
+        val centerY = baselinePx - fontPx * DIGIT_CENTER_EM
+        val offset = fontPx * COLON_DOT_OFFSET_EM
+        val radius = fontPx * COLON_DOT_RADIUS_EM
+        drawCircle(color, radius, Offset(cx, centerY - offset))
+        drawCircle(color, radius, Offset(cx, centerY + offset))
+    }
+}
+
+/** 分隔符格位宽（em），两侧留白对称。 */
+private const val COLON_SLOT_EM = 0.32f
+/** 圆点半径（em）。 */
+private const val COLON_DOT_RADIUS_EM = 0.045f
+/** 两个圆点中心到分隔符中心的距离（em）。 */
+private const val COLON_DOT_OFFSET_EM = 0.14f
+/** 数字的视觉中心相对基线的位置（数字高约 0.71em，取一半）。 */
+private const val DIGIT_CENTER_EM = 0.355f
 
 @Composable
 private fun CaptureBadge(

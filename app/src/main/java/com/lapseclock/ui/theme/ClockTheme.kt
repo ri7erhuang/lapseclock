@@ -25,6 +25,11 @@ data class ClockTheme(
     val dim: Color,
     /** 强调色：节日高亮、进度线、角标 */
     val accent: Color,
+    /**
+     * 时钟首位数字与冒号的颜色。和 [accent] 分开是有意的：accent 会被天气/节日改写，
+     * 而时钟的表情不该随天气变；这里放每种皮肤挑好的一档亮色。
+     */
+    val lead: Color = accent,
     /** 数字字重，皮肤之间用来拉开气质差异 */
     val weight: FontWeight = FontWeight.Thin,
 )
@@ -40,6 +45,7 @@ object Themes {
         main = Color(0xFFF2F2F2),
         dim = Color(0xFF8A8A8A),
         accent = Color(0xFF6FA8FF),
+        lead = Color(0xFFFF4D4D),
     )
 
     val warm = ClockTheme(
@@ -49,6 +55,7 @@ object Themes {
         main = Color(0xFFF3E7D6),
         dim = Color(0xFF8A7C6B),
         accent = Color(0xFFE8A33D),
+        lead = Color(0xFFF5A94E),
     )
 
     val celadon = ClockTheme(
@@ -58,6 +65,7 @@ object Themes {
         main = Color(0xFFDCEFE6),
         dim = Color(0xFF6F8F83),
         accent = Color(0xFF4FD1A5),
+        lead = Color(0xFF57E0B0),
     )
 
     val film = ClockTheme(
@@ -67,6 +75,7 @@ object Themes {
         main = Color(0xFFEDE6D8),
         dim = Color(0xFF8A857A),
         accent = Color(0xFFC4553B),
+        lead = Color(0xFFD9613F),
         weight = FontWeight.Light,
     )
 
@@ -77,6 +86,7 @@ object Themes {
         main = Color(0xFF9BE7FF),
         dim = Color(0xFF4D7E96),
         accent = Color(0xFFFF4D9D),
+        lead = Color(0xFFFF4D9D),
         weight = FontWeight.Light,
     )
 
