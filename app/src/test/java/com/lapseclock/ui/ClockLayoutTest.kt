@@ -36,4 +36,32 @@ class ClockLayoutTest {
     fun `bigger screen allows the full burn offset`() {
         assertTrue(freeTravel(1200.dp, blockH, 46.dp) >= 60.dp)
     }
+
+    @Test
+    fun `level only scales the horizontal amplitude`() {
+        for (level in 0..2) {
+            val maxX = when (level) { 0 -> 30f; 1 -> 60f; else -> 80f }
+            repeat(64) { i ->
+                val (x, y) = antiBurnOffset(i * 0x9E3779B9.toInt() + level, level)
+                assertTrue("x=$x exceeds ±$maxX at level $level", x.value in -maxX..maxX)
+                assertTrue("y=$y exceeds ±20 at level $level", y.value in -20f..20f)
+            }
+        }
+    }
+
+    @Test
+    fun `the vertical micro-shift ignores the level`() {
+        val seed = 0x51ED2701
+        val ys = (0..2).map { level -> antiBurnOffset(seed, level).second.value }
+        assertEquals(ys[0], ys[1], 0f)
+        assertEquals(ys[1], ys[2], 0f)
+        assertTrue("y=${ys[0]} outside ±20", ys[0] in -20f..20f)
+    }
+
+    @Test
+    fun `off level shifts nothing`() {
+        val (x, y) = antiBurnOffset(0x9E3779B9.toInt(), -1)
+        assertEquals(0f, x.value, 0f)
+        assertEquals(0f, y.value, 0f)
+    }
 }

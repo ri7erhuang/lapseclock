@@ -229,15 +229,15 @@ fun SettingsSheet(
             OptionRow(
                 options = listOf(
                     "关闭" to -1,
-                    "低 30/20" to 0,
-                    "中 60/40" to 1,
-                    "高 80/60" to 2,
+                    "低 30" to 0,
+                    "中 60" to 1,
+                    "高 80" to 2,
                 ),
                 selected = settings.burnShiftLevel,
                 onSelect = onSetBurnShiftLevel,
             )
             Text(
-                text = "数字区域随机偏移范围（dp），档位越高防烧屏效果越好。",
+                text = "数字区域左右随机偏移范围（dp），另加固定的上下微移；档位越高防烧屏效果越好。",
                 color = panelDim,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,

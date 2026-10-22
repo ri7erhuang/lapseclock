@@ -83,15 +83,17 @@ private fun xorshift(seed: Int): Int {
 
 /**
  * 防烧屏随机游走：按档位返回 dp 偏移。
- * 档位 -1=关闭，0=低 x±30/y±20，1=中 x±60/y±40，2=高 x±80/y±60
+ * 档位 -1=关闭，0=低 x±30，1=中 x±60，2=高 x±80；y 一律固定 ±20。
  *
- * 这里给的是「想要」的位移，实际位移还要由 [ClockFace] 按屏幕可用空白夹紧，
- * 屏幕小的时候上下幅度会自动收窄，不会把时钟推到进度线或信息组上。
+ * 横向是主力：数字区只占屏宽六成左右，单侧空白普遍上百 dp，±80dp 全额生效，
+ * 设置页按档位写的就是这个横向幅度。纵向只留固定 ±20dp 做上下微移——纯左右平移摊不开
+ * 数字横笔画那几行像素的累积亮度——而上下都压着保留带，所以最终位移仍由 [ClockFace]
+ * 按屏幕可用空白夹紧（12 小时制多一行、小屏时会自动收窄），不会推到进度线或信息组上。
  */
-private fun antiBurnOffset(seed: Int, level: Int): Pair<Dp, Dp> {
+internal fun antiBurnOffset(seed: Int, level: Int): Pair<Dp, Dp> {
     if (level < 0) return 0.dp to 0.dp
     val maxX = when (level) { 0 -> 30f; 1 -> 60f; else -> 80f }
-    val maxY = when (level) { 0 -> 20f; 1 -> 40f; else -> 60f }
+    val maxY = 20f
     val rx = (seed and 0xFFFF) / 65535f
     val ry = ((seed ushr 16) and 0xFFFF) / 65535f
     return ((rx - 0.5f) * 2f * maxX).dp to ((ry - 0.5f) * 2f * maxY).dp
