@@ -23,8 +23,8 @@ android {
         applicationId = "com.lapseclock"
         minSdk = 31
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         buildConfigField("String", "QWEATHER_KEY", "\"${localProp("qweatherKey")}\"")
         buildConfigField("String", "QWEATHER_HOST", "\"${localProp("qweatherHost")}\"")
@@ -94,4 +94,6 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    testImplementation("junit:junit:4.13.2")
 }

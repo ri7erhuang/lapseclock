@@ -11,6 +11,7 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
@@ -36,6 +37,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // 横屏时前置挖孔会落到屏幕左侧，默认策略会把整块内容内缩 80 多像素，
+        // 左对齐的页面（第二屏）会直接露出黑边。ALWAYS 让内容延伸到挖孔区域底下。
+        window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        }
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
 
         if (hasCameraPermission()) startCapture() else {
@@ -71,13 +79,13 @@ class MainActivity : ComponentActivity() {
                 onOpenExport = { vm.screen.value = Screen.Export },
                 onEnterSleep = { vm.enterSleep() },
                 onWakeUp = { vm.wakeUp() },
+                onTakeShot = { vm.captureNow() },
+                onCycleTheme = { vm.cycleTheme() },
                 onBack = { vm.screen.value = Screen.Clock },
                 onSetInterval = { vm.setInterval(it) },
                 onSetResolution = { w, h -> vm.setResolution(w, h) },
                 onSetUse24h = { vm.setUse24h(it) },
-                onSetShowSeconds = { vm.setShowSeconds(it) },
                 onSetPaused = { vm.setPaused(it) },
-                onSetAutoClean = { vm.setAutoClean(it) },
                 onSetSoftBrightness = { vm.setSoftBrightness(it) },
                 onSetBurnShiftLevel = { vm.setBurnShiftLevel(it) },
                 onSetWatermarkEnabled = { vm.setWatermarkEnabled(it) },
@@ -85,9 +93,13 @@ class MainActivity : ComponentActivity() {
                 onSetWatermarkShowTime = { vm.setWatermarkShowTime(it) },
                 onSetWeatherCity = { vm.setWeatherCity(it) },
                 onSetUseLocation = { vm.setUseLocation(it) },
+                onSetThemeId = { vm.setThemeId(it) },
+                onSetAutoExport = { vm.setAutoExport(it) },
                 store = vm.store,
-                onStartExport = { from, to, fps, w, h -> vm.export.start(from, to, fps, w, h) },
+                onStartExport = { dates, fps, w, h -> vm.export.start(dates, fps, w, h) },
                 onCancelExport = { vm.export.cancel() },
+                onResetExport = { vm.export.reset() },
+                onDeleteSources = { vm.deleteSourcePhotos(it) },
             )
         }
     }

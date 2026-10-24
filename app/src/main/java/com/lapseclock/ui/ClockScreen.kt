@@ -2,6 +2,7 @@ package com.lapseclock.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,7 +26,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,9 +39,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -50,6 +55,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,15 +64,14 @@ import com.lapseclock.calendar.dayInfoOf
 import com.lapseclock.capture.CaptureStatus
 import com.lapseclock.isSleeping
 import com.lapseclock.settings.AppSettings
+import com.lapseclock.ui.theme.ClockTheme
+import com.lapseclock.ui.theme.Themes
+import com.lapseclock.ui.theme.resolveClockTheme
 import com.lapseclock.weather.WeatherUi
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-
-private val pureWhite = Color(0xFFF2F2F2)
-private val softWhite = Color(0xFFD8D8D8)
-private val clockDim = Color(0xFF8A8A8A)
 
 private fun xorshift(seed: Int): Int {
     var x = seed
@@ -78,17 +83,46 @@ private fun xorshift(seed: Int): Int {
 
 /**
  * 防烧屏随机游走：按档位返回 dp 偏移。
- * 档位 -1=关闭，0=低 x±30/y±20，1=中 x±60/y±40，2=高 x±80/y±60
+ * 档位 -1=关闭，0=低 x±30，1=中 x±60，2=高 x±80；y 一律固定 ±20。
+ *
+ * 横向是主力：数字区只占屏宽六成左右，单侧空白普遍上百 dp，±80dp 全额生效，
+ * 设置页按档位写的就是这个横向幅度。纵向只留固定 ±20dp 做上下微移——纯左右平移摊不开
+ * 数字横笔画那几行像素的累积亮度——而上下都压着保留带，所以最终位移仍由 [ClockFace]
+ * 按屏幕可用空白夹紧（12 小时制多一行、小屏时会自动收窄），不会推到进度线或信息组上。
  */
-private fun antiBurnOffset(seed: Int, level: Int): Pair<Dp, Dp> {
+internal fun antiBurnOffset(seed: Int, level: Int): Pair<Dp, Dp> {
     if (level < 0) return 0.dp to 0.dp
     val maxX = when (level) { 0 -> 30f; 1 -> 60f; else -> 80f }
-    val maxY = when (level) { 0 -> 20f; 1 -> 40f; else -> 60f }
+    val maxY = 20f
     val rx = (seed and 0xFFFF) / 65535f
     val ry = ((seed ushr 16) and 0xFFFF) / 65535f
     return ((rx - 0.5f) * 2f * maxX).dp to ((ry - 0.5f) * 2f * maxY).dp
 }
 
+/**
+ * 时钟内容不允许进入的保留带。
+ * 顶部留给左上信息组（天气/积存金），底部留给今日进度线和双击切皮肤的名牌，
+ * 时钟随机游走时被这两个保留带夹住，不会压到它们上面。
+ */
+private val CLOCK_TOP_RESERVE = 40.dp
+private val CLOCK_BOTTOM_RESERVE = 46.dp
+
+/**
+ * 居中内容在一侧还能平移多少：先算出居中后该侧剩下的空白，再扣掉保留带。
+ * 内容比可用区域还大时返回 0，即锁死在居中位置。
+ */
+internal fun freeTravel(space: Dp, content: Dp, reserve: Dp): Dp =
+    ((space - content) / 2 - reserve).coerceAtLeast(0.dp)
+
+/**
+ * 时钟主屏。
+ *
+ * 手势约定：
+ * - 单击：唤出右上角控件
+ * - 双击：切下一套皮肤（自动 → 墨白 → 暖夜 → 青瓷 → 胶片 → 赛博 → 自动）
+ * - 长按：打开设置
+ * - 左滑：进入第二屏（数据）
+ */
 @Composable
 fun ClockScreen(
     settings: AppSettings,
@@ -99,6 +133,8 @@ fun ClockScreen(
     onOpenExport: () -> Unit,
     onEnterSleep: () -> Unit,
     onWakeUp: () -> Unit,
+    onCycleTheme: () -> Unit,
+    onSwipeLeft: () -> Unit,
     weather: WeatherUi?,
     gold: GoldUi?,
     modifier: Modifier = Modifier,
@@ -106,17 +142,23 @@ fun ClockScreen(
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     val manualSleeping = settings.manualSleep
     val sleeping = isSleeping(manualSleeping, settings.autoSleepSnoozeNight, now)
-    val tickMs = when {
-        sleeping -> 1000L
-        settings.showSeconds -> 200L
-        else -> 1000L
-    }
-    LaunchedEffect(settings.showSeconds, sleeping) {
+
+    LaunchedEffect(Unit) {
         while (true) {
             now = LocalDateTime.now()
-            delay(tickMs)
+            delay(1000L)
         }
     }
+
+    val dayInfo = remember(now.toLocalDate()) { dayInfoOf(now.toLocalDate()) }
+    // 主题随时段/天气/节日变化。key 只取小时，避免每秒重算一遍解析器
+    val theme = remember(settings.themeId, now.hour, weather?.text, dayInfo.specialText) {
+        resolveClockTheme(settings.themeId, now, weather?.text, dayInfo.specialText)
+    }
+    // 柔和亮度：把主色往黑里压一点，长时间盯着更舒服（不影响主题本身的色相）
+    val mainColor = if (settings.softBrightness) lerp(theme.main, Color.Black, 0.16f) else theme.main
+    // 首位数字和冒号的强调色走同一档柔和处理，否则打开柔和亮度后会比其它数字更扎眼
+    val leadColor = if (settings.softBrightness) lerp(theme.lead, Color.Black, 0.16f) else theme.lead
 
     var sleepPeek by remember { mutableStateOf(false) }
     LaunchedEffect(sleeping, sleepPeek) {
@@ -137,215 +179,279 @@ fun ClockScreen(
         controlsVisible = false
     }
 
+    // 切皮肤后短暂显示名字，否则用户不知道双击切到了哪一套
+    var themeToast by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(themeToast) {
+        if (themeToast != null) {
+            delay(1_600)
+            themeToast = null
+        }
+    }
+
     var shiftSeed by remember { mutableIntStateOf(0x9E3779B9.toInt()) }
+    var burnTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(120_000)
             shiftSeed = xorshift(shiftSeed)
+            burnTick++
         }
     }
     val (shiftX, shiftY) = antiBurnOffset(shiftSeed, settings.burnShiftLevel)
 
-    val mainColor = if (settings.softBrightness) softWhite else pureWhite
+    // 底边进度线不参与整屏随机游走——游走只属于时钟内容。它自己在 0/4/8dp 三档间
+    // 往返，复用同一个 tick 保证周期与游走一致。0→4→8→4→0 最大只跳 4dp，
+    // 比循环式（8→0 一次跳 8dp）视觉上更稳。
+    val lineBottomDp =
+        if (settings.burnShiftLevel < 0) 8f
+        else when (burnTick % 4) { 0 -> 0f; 1 -> 4f; 2 -> 8f; else -> 4f }
+
     val showUi = !sleeping || sleepPeek
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black)
+            // 休眠时真正纯黑：主题底色（暖夜 #0C0906 等）仍会让 OLED 微微发光
+            .background(if (sleeping) Color.Black else theme.bg)
             .pointerInput(sleeping) {
-                detectTapGestures {
-                    if (sleeping) sleepPeek = true
-                    else lastInteraction = System.nanoTime()
-                }
+                detectTapGestures(
+                    onTap = {
+                        if (sleeping) sleepPeek = true else lastInteraction = System.nanoTime()
+                    },
+                    onDoubleTap = {
+                        if (!sleeping) {
+                            themeToast = Themes.nextChoice(settings.themeId).name
+                            onCycleTheme()
+                        }
+                    },
+                    onLongPress = {
+                        if (!sleeping) onOpenSettings()
+                    },
+                )
+            }
+            .pointerInput(sleeping) {
+                val threshold = 70.dp.toPx()
+                var accumulated = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { accumulated = 0f },
+                    onDragEnd = {
+                        if (!sleeping && accumulated < -threshold) onSwipeLeft()
+                        accumulated = 0f
+                    },
+                    onDragCancel = { accumulated = 0f },
+                ) { _, dragAmount -> accumulated += dragAmount }
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (!showUi) return@Box
+        // 注意：composable lambda 里不能用 return 提前退出（会让 Compose 的组结构失衡，
+        // 运行时抛 ComposerImpl.exitGroup IndexOutOfBounds）。条件包裹是唯一安全的写法。
+        if (showUi) {
+            ClockFace(
+                now = now,
+                theme = theme,
+                mainColor = mainColor,
+                leadColor = leadColor,
+                shiftX = shiftX,
+                shiftY = shiftY,
+                use24h = settings.use24h,
+                sleepNote = when {
+                    !sleeping -> null
+                    manualSleeping -> "休眠中 · 点右上角 ☀ 唤醒"
+                    else -> "休眠中 · 08:00 自动恢复（☀ 可提前唤醒）"
+                },
+            )
 
-        ClockFace(
-            now = now,
-            settings = settings,
-            mainColor = mainColor,
-            shiftX = shiftX,
-            shiftY = shiftY,
-            sleepNote = when {
-                !sleeping -> null
-                manualSleeping -> "休眠中 · 点右上角 ☀ 唤醒"
-                else -> "休眠中 · 08:00 自动恢复（☀ 可提前唤醒）"
-            },
-        )
+            // 今日进度：一条细线，长度随时间推进。X 方向静止（贴底边满宽），
+            // Y 方向自己在 0/4/8dp 三档往返防烧屏，不跟随整屏随机游走
+            DayProgressLine(
+                now = now,
+                theme = theme,
+                bottomDp = lineBottomDp,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
 
-        if (!sleeping) {
-            if (weather != null || gold != null) {
-                TopInfoRow(
-                    weather = weather,
-                    gold = gold,
-                    mainColor = mainColor,
-                    modifier = Modifier.align(Alignment.TopStart),
+            themeToast?.let {
+                Text(
+                    text = it,
+                    color = theme.accent,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 22.dp),
                 )
             }
 
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 8.dp, end = 12.dp)
-                    .alpha(if (controlsVisible) 1f else 0f),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                CaptureBadge(status = status, settings = settings, mainColor = mainColor)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = "设置",
-                            tint = mainColor,
-                        )
-                    }
-                    IconButton(onClick = onOpenExport) {
-                        Icon(
-                            imageVector = Icons.Filled.Movie,
-                            contentDescription = "合成",
-                            tint = mainColor,
-                        )
-                    }
-                    IconButton(onClick = onEnterSleep) {
-                        Icon(
-                            imageVector = Icons.Filled.DarkMode,
-                            contentDescription = "休眠",
-                            tint = mainColor,
-                        )
-                    }
-                }
-                status.lastError?.let {
-                    Text(
-                        text = it,
-                        color = Color(0xFFFF6B6B),
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.End,
-                        modifier = Modifier.width(240.dp),
+            if (!sleeping) {
+                if (weather != null || gold != null) {
+                    TopInfoRow(
+                        weather = weather,
+                        gold = gold,
+                        mainColor = mainColor,
+                        modifier = Modifier.align(Alignment.TopStart),
                     )
                 }
+
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 8.dp, end = 12.dp)
+                        .alpha(if (controlsVisible) 1f else 0f),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    CaptureBadge(status = status, theme = theme, settings = settings, mainColor = mainColor)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Filled.Settings, contentDescription = "设置", tint = mainColor)
+                        }
+                        IconButton(onClick = onOpenExport) {
+                            Icon(Icons.Filled.Movie, contentDescription = "合成", tint = mainColor)
+                        }
+                        IconButton(onClick = onEnterSleep) {
+                            Icon(Icons.Filled.DarkMode, contentDescription = "休眠", tint = mainColor)
+                        }
+                    }
+                    status.lastError?.let {
+                        Text(
+                            text = it,
+                            color = Color(0xFFFF6B6B),
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(240.dp),
+                        )
+                    }
+                }
+            }
+
+            // 休眠中只有 peek 的几秒内露出唤醒按钮，避免黑屏上挂着控件
+            if (sleeping && sleepPeek) {
+                IconButton(
+                    onClick = onWakeUp,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 8.dp, end = 12.dp),
+                ) {
+                    Icon(Icons.Filled.LightMode, contentDescription = "唤醒", tint = mainColor)
+                }
+            }
+
+            if (permissionNeeded) {
+                PermissionCard(theme, onRequestPermission)
             }
         }
+    }
+}
 
-        // 休眠中只有 peek 的几秒内露出唤醒按钮，避免黑屏上挂着控件
-        if (sleeping && sleepPeek) {
-            IconButton(
-                onClick = onWakeUp,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 8.dp, end = 12.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.LightMode,
-                    contentDescription = "唤醒",
-                    tint = mainColor,
-                )
-            }
-        }
-
-        if (permissionNeeded) {
-            PermissionCard(onRequestPermission)
-        }
+/** 今日进度细线：贴屏幕底边，长度 = 已过分钟 / 1440。
+ *  X 方向静止，防烧屏靠 bottomDp 在 0/4/8dp 三档间往返。 */
+@Composable
+private fun DayProgressLine(
+    now: LocalDateTime,
+    theme: ClockTheme,
+    bottomDp: Float,
+    modifier: Modifier = Modifier,
+) {
+    val progress = (now.hour * 60 + now.minute) / 1440f
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(bottom = bottomDp.dp)
+            .height(4.dp),
+    ) {
+        drawRect(color = theme.dim.copy(alpha = 0.2f), size = size)
+        drawRect(
+            color = theme.accent.copy(alpha = 0.8f),
+            size = Size(size.width * progress, size.height),
+        )
     }
 }
 
 @Composable
 private fun ClockFace(
     now: LocalDateTime,
-    settings: AppSettings,
+    theme: ClockTheme,
     mainColor: Color,
+    leadColor: Color,
     shiftX: Dp,
     shiftY: Dp,
+    use24h: Boolean,
     sleepNote: String?,
 ) {
     BoxWithConstraints(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
     ) {
-        val bigSize = with(androidx.compose.ui.platform.LocalDensity.current) {
+        val density = LocalDensity.current
+        val bigSize = with(density) {
             minOf(maxWidth * 0.30f, maxHeight * 0.52f).toSp()
         }
-        val hour = if (settings.use24h) now.hour else ((now.hour + 11) % 12 + 1)
-        val amPm = if (settings.use24h) "" else if (now.hour < 12) "上午 " else "下午 "
+        // 防烧屏位移必须落在内容实际占位之外的空隙里，否则下移会压到底边进度线、
+        // 上移会压到左上信息组。幅度是随屏幕尺寸变化的量，只能按实测内容尺寸夹住，
+        // 不能拿 antiBurnOffset 里的固定 dp 直接当位移用。
+        var contentSize by remember { mutableStateOf(IntSize.Zero) }
+        val contentW = with(density) { contentSize.width.toDp() }
+        val contentH = with(density) { contentSize.height.toDp() }
+        // 首帧还没量到尺寸，先不位移，避免闪一下越界
+        val measured = contentSize != IntSize.Zero
+        val maxShiftX = freeTravel(maxWidth, contentW, 0.dp)
+        val maxShiftUp = freeTravel(maxHeight, contentH, CLOCK_TOP_RESERVE)
+        val maxShiftDown = freeTravel(maxHeight, contentH, CLOCK_BOTTOM_RESERVE)
+        val safeShiftX = if (measured) shiftX.coerceIn(-maxShiftX, maxShiftX) else 0.dp
+        val safeShiftY = if (measured) shiftY.coerceIn(-maxShiftUp, maxShiftDown) else 0.dp
+        val hour = if (use24h) now.hour else ((now.hour + 11) % 12 + 1)
+        val amPm = if (use24h) "" else if (now.hour < 12) "上午 " else "下午 "
         val twoDigit = String.format(Locale.getDefault(), "%02d", hour)
         val minuteTwo = String.format(Locale.getDefault(), "%02d", now.minute)
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.graphicsLayer {
-                translationX = shiftX.toPx()
-                translationY = shiftY.toPx()
-            },
+            modifier = Modifier
+                .onSizeChanged { contentSize = it }
+                .graphicsLayer {
+                    translationX = safeShiftX.toPx()
+                    translationY = safeShiftY.toPx()
+                },
         ) {
             // 每个数字占固定宽度的格位：系统默认字体的数字宽度随字形变化（vivo 尤甚），
             // 直接拼一个长字符串会导致整块时钟左右跳动。格位宽度取 0-9 中最宽的字形。
-            val density = LocalDensity.current
             val measurer = rememberTextMeasurer()
-            val bigStyle = remember(bigSize) {
-                TextStyle(
-                    fontSize = bigSize,
-                    fontWeight = FontWeight.Thin,
-                    letterSpacing = 2.sp,
-                )
-            }
-            val smallStyle = remember(bigSize) {
-                TextStyle(
-                    fontSize = bigSize * 0.30f,
-                    fontWeight = FontWeight.Thin,
-                    letterSpacing = 2.sp,
-                )
+            val bigStyle = remember(bigSize, theme.weight) {
+                TextStyle(fontSize = bigSize, fontWeight = theme.weight, letterSpacing = 2.sp)
             }
             val bigDigitW = remember(bigStyle) {
                 with(density) {
                     ('0'..'9').maxOf { measurer.measure(it.toString(), bigStyle).size.width }.toDp()
                 }
             }
-            val smallDigitW = remember(smallStyle) {
-                with(density) {
-                    ('0'..'9').maxOf { measurer.measure(it.toString(), smallStyle).size.width }.toDp()
-                }
-            }
+            // 分隔符不用「:」字形：字形自带的基线和左右边距会让它比数字低、且左右不对称，
+            // 各家系统字体（vivo 尤甚）差别还大。改成自己画两个圆点，位置全按字号算。
+            val digitBox = remember(bigStyle) { measurer.measure("0", bigStyle) }
+            val digitLineH = with(density) { digitBox.size.height.toDp() }
+            val digitBaselinePx = remember(digitBox) { digitBox.firstBaseline }
+            val fontPx = with(density) { bigSize.toPx() }
+            val colonSlotW = with(density) { (fontPx * COLON_SLOT_EM).toDp() }
 
             Row {
                 if (amPm.isNotEmpty()) {
                     Text(
                         text = amPm.trim(),
-                        color = clockDim,
+                        color = theme.dim,
                         fontSize = bigSize * 0.16f,
-                        fontWeight = FontWeight.Thin,
+                        fontWeight = theme.weight,
                         modifier = Modifier
                             .padding(end = with(density) { (bigSize * 0.06f).toPx().toDp() })
                             .alignByBaseline(),
                     )
                 }
-                DigitRow(twoDigit, mainColor, bigSize, bigDigitW)
-                Text(
-                    text = ":",
-                    color = mainColor,
-                    fontSize = bigSize,
-                    fontWeight = FontWeight.Thin,
-                    letterSpacing = 2.sp,
-                    modifier = Modifier.alignByBaseline(),
+                DigitRow(twoDigit, mainColor, bigSize, bigDigitW, theme.weight, leadColor = leadColor)
+                ColonDots(
+                    color = leadColor,
+                    fontPx = fontPx,
+                    baselinePx = digitBaselinePx,
+                    slotWidth = colonSlotW,
+                    lineHeight = digitLineH,
                 )
-                DigitRow(minuteTwo, mainColor, bigSize, bigDigitW)
-                if (settings.showSeconds) {
-                    Text(
-                        text = ":",
-                        color = clockDim,
-                        fontSize = bigSize * 0.30f,
-                        fontWeight = FontWeight.Thin,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                    DigitRow(
-                        String.format(Locale.getDefault(), "%02d", now.second),
-                        clockDim,
-                        bigSize * 0.30f,
-                        smallDigitW,
-                    )
-                }
+                DigitRow(minuteTwo, mainColor, bigSize, bigDigitW, theme.weight)
             }
             val dayInfo = remember(now.toLocalDate()) { dayInfoOf(now.toLocalDate()) }
             val dateFmt = DateTimeFormatter.ofPattern("M月d日", Locale.CHINA)
@@ -353,17 +459,17 @@ private fun ClockFace(
             Text(
                 text = buildAnnotatedString {
                     append(now.format(dateFmt))
-                    withStyle(SpanStyle(color = Color(0xFF6F6F6F))) {
+                    withStyle(SpanStyle(color = theme.dim.copy(alpha = 0.75f))) {
                         append(" ${dayInfo.lunarText}")
                     }
                     append(" ${now.format(weekdayFmt)}")
                     dayInfo.specialText?.let {
-                        withStyle(SpanStyle(color = Color(0xFFFFC857))) {
+                        withStyle(SpanStyle(color = theme.accent)) {
                             append(" $it")
                         }
                     }
                 },
-                color = clockDim,
+                color = theme.dim,
                 fontSize = bigSize * 0.13f,
                 fontWeight = FontWeight.Light,
                 modifier = Modifier.padding(top = 6.dp),
@@ -371,7 +477,7 @@ private fun ClockFace(
             sleepNote?.let {
                 Text(
                     text = it,
-                    color = Color(0xFF4A4A4A),
+                    color = theme.dim.copy(alpha = 0.5f),
                     fontSize = bigSize * 0.07f,
                     modifier = Modifier.padding(top = 10.dp),
                 )
@@ -390,13 +496,15 @@ private fun RowScope.DigitRow(
     color: Color,
     fontSize: TextUnit,
     slotWidth: Dp,
+    weight: FontWeight,
+    leadColor: Color = color,
 ) {
-    digits.forEach { ch ->
+    digits.forEachIndexed { index, ch ->
         Text(
             text = ch.toString(),
-            color = color,
+            color = if (index == 0) leadColor else color,
             fontSize = fontSize,
-            fontWeight = FontWeight.Thin,
+            fontWeight = weight,
             textAlign = TextAlign.Center,
             modifier = Modifier
                 .width(slotWidth)
@@ -405,22 +513,68 @@ private fun RowScope.DigitRow(
     }
 }
 
+/**
+ * 时钟分隔符：两个圆点，不用「:」字形。
+ *
+ * 用字形时冒号的位置由字体决定——基线对齐后它的点坐在数字下半部，左右还带着字形的
+ * 边距，看起来既不居中又偏一侧；vivo 这类比例数字字体尤其明显。改成画点之后，
+ * 位置只跟字号有关：水平居中在自己的格位里，垂直对准数字的视觉中心（字高的中线）。
+ */
 @Composable
-private fun CaptureBadge(status: CaptureStatus, settings: AppSettings, mainColor: Color) {
+private fun RowScope.ColonDots(
+    color: Color,
+    fontPx: Float,
+    baselinePx: Float,
+    slotWidth: Dp,
+    lineHeight: Dp,
+) {
+    Canvas(
+        modifier = Modifier
+            .align(Alignment.Top)
+            .width(slotWidth)
+            .height(lineHeight),
+    ) {
+        val cx = size.width / 2f
+        val centerY = baselinePx - fontPx * DIGIT_CENTER_EM
+        val offset = fontPx * COLON_DOT_OFFSET_EM
+        val radius = fontPx * COLON_DOT_RADIUS_EM
+        drawCircle(color, radius, Offset(cx, centerY - offset))
+        drawCircle(color, radius, Offset(cx, centerY + offset))
+    }
+}
+
+/** 分隔符格位宽（em），两侧留白对称。 */
+private const val COLON_SLOT_EM = 0.32f
+/** 圆点半径（em）。 */
+private const val COLON_DOT_RADIUS_EM = 0.045f
+/** 两个圆点中心到分隔符中心的距离（em）。 */
+private const val COLON_DOT_OFFSET_EM = 0.14f
+/** 数字的视觉中心相对基线的位置（数字高约 0.71em，取一半）。 */
+private const val DIGIT_CENTER_EM = 0.355f
+
+@Composable
+private fun CaptureBadge(
+    status: CaptureStatus,
+    theme: ClockTheme,
+    settings: AppSettings,
+    mainColor: Color,
+) {
     val sleeping = status.sleeping
     // 按需绑定模式下，拍与拍之间相机处于释放状态（bound=false），
     // 循环仍在跑时视为正常延时中，只有循环没起来才提示等待相机
     val waitingCamera = !status.bound && !status.loopActive
     val dotColor = when {
-        sleeping -> Color(0xFF4A4A4A)
+        sleeping -> theme.dim.copy(alpha = 0.5f)
+        status.storageLow -> Color(0xFFFF6B6B)
+        settings.paused -> theme.dim
         status.lastError != null -> Color(0xFFFF6B6B)
         waitingCamera -> Color(0xFFFFC857)
-        settings.paused -> Color(0xFF8A8A8A)
         status.loopActive -> Color(0xFF5BD97A)
         else -> Color(0xFFFFC857)
     }
     val stateLabel = when {
         sleeping -> "休眠中"
+        status.storageLow -> "存储不足"
         settings.paused -> "已暂停"
         status.lastError != null -> "出错"
         waitingCamera -> "等待相机"
@@ -428,10 +582,7 @@ private fun CaptureBadge(status: CaptureStatus, settings: AppSettings, mainColor
         else -> "启动中"
     }
 
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF1A1A1A),
-    ) {
+    Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFF1A1A1A)) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -441,22 +592,22 @@ private fun CaptureBadge(status: CaptureStatus, settings: AppSettings, mainColor
             Text(text = stateLabel, color = mainColor, fontSize = 12.sp)
             Text(
                 text = "今日 ${status.todayCount} · 共 ${status.totalCount}",
-                color = clockDim,
+                color = theme.dim,
                 fontSize = 12.sp,
             )
+            if (status.storageLow) {
+                Text(text = "剩 ${formatBytes(status.freeBytes)}", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+            }
             if (status.skipped > 0) {
-                Text(text = "跳过 ${status.skipped}", color = clockDim, fontSize = 12.sp)
+                Text(text = "跳过 ${status.skipped}", color = theme.dim, fontSize = 12.sp)
             }
         }
     }
 }
 
 @Composable
-private fun PermissionCard(onRequestPermission: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF161616),
-    ) {
+private fun PermissionCard(theme: ClockTheme, onRequestPermission: () -> Unit) {
+    Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFF161616)) {
         Column(
             modifier = Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -464,7 +615,7 @@ private fun PermissionCard(onRequestPermission: () -> Unit) {
         ) {
             Text(
                 text = "需要相机权限才能开始延时拍照",
-                color = pureWhite,
+                color = theme.main,
                 fontSize = 15.sp,
                 textAlign = TextAlign.Center,
             )

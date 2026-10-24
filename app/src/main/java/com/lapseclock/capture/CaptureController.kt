@@ -28,8 +28,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.LocalDate
 import kotlin.coroutines.resume
 
 data class CaptureStatus(
@@ -42,6 +45,9 @@ data class CaptureStatus(
     val skipped: Int = 0,
     val todayCount: Int = 0,
     val totalCount: Int = 0,
+    /** 剩余空间低于 [CaptureController.MIN_FREE_BYTES] 时停拍 */
+    val storageLow: Boolean = false,
+    val freeBytes: Long = 0L,
 )
 
 /**
@@ -64,6 +70,9 @@ class CaptureController(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = ContextCompat.getMainExecutor(appContext)
 
+    /** 绑定/解绑/拍照串行化：试拍与定时拍照不能同时操作 CameraX */
+    private val cameraLock = Mutex()
+
     @Volatile
     private var owner: LifecycleOwner? = null
 
@@ -71,6 +80,39 @@ class CaptureController(
     suspend fun start(owner: LifecycleOwner) {
         this.owner = owner
         if (loopJob?.isActive != true) startLoop()
+    }
+
+    /**
+     * 立刻拍一张。用于「试拍 / 取景」——无预览模式下，这是确认拍到哪的唯一办法。
+     * 不改变定时时刻表；与定时拍照共用 cameraLock，不会撞车。
+     */
+    suspend fun shootNow(): Boolean {
+        val o = owner ?: run {
+            _status.value = _status.value.copy(lastError = "试拍失败：相机未就绪")
+            return false
+        }
+        if (store.freeBytes() < MIN_FREE_BYTES) {
+            _status.value = _status.value.copy(
+                lastError = "试拍失败：存储空间不足",
+                storageLow = true,
+            )
+            return false
+        }
+        val s = repo.settings.first()
+        val ok = cameraLock.withLock {
+            if (imageCapture == null) bindInternal(o)
+            val ic = imageCapture
+            if (ic == null) {
+                _status.value = _status.value.copy(lastError = _status.value.lastError ?: "试拍失败：相机不可用")
+                return@withLock false
+            }
+            val shot = shoot(s)
+            // 暂停/休眠时相机本来就不该常驻，试拍后恢复原状
+            if (isSleeping(s.manualSleep, s.autoSleepSnoozeNight) || s.paused) unbindInternal()
+            shot
+        }
+        refreshCounts()
+        return ok
     }
 
     fun stop() {
@@ -108,6 +150,9 @@ class CaptureController(
             imageCapture = capture
             _status.value = _status.value.copy(bound = true, lastError = null)
         } catch (t: Throwable) {
+            // 绑定失败时清掉引用，避免下次 shoot 拿到一个没绑定成功的旧 use case
+            imageCapture = null
+            provider = null
             _status.value = _status.value.copy(
                 bound = false,
                 lastError = "相机绑定失败: ${t.message}",
@@ -136,6 +181,7 @@ class CaptureController(
             var skippedTotal = 0
             var lastW = -1
             var lastH = -1
+            var bindFailures = 0
 
             // 启动即初始化计数，否则暂停/休眠状态下角标会一直显示 0
             refreshCounts()
@@ -145,7 +191,7 @@ class CaptureController(
 
                 if (isSleeping(s.manualSleep, s.autoSleepSnoozeNight)) {
                     _status.value = _status.value.copy(loopActive = false, sleeping = true)
-                    unbindInternal()
+                    cameraLock.withLock { unbindInternal() }
                     t0 = 0L
                     delay(1000)
                     continue
@@ -155,14 +201,38 @@ class CaptureController(
 
                 if (s.paused) {
                     _status.value = _status.value.copy(loopActive = false)
-                    unbindInternal()
+                    cameraLock.withLock { unbindInternal() }
                     t0 = 0L
                     delay(400)
                     continue
                 }
 
+                // 存储不足时停拍并释放相机，等空间恢复后自动继续；拍照循环不空转
+                val free = store.freeBytes()
+                if (free < MIN_FREE_BYTES) {
+                    _status.value = _status.value.copy(
+                        loopActive = false,
+                        storageLow = true,
+                        freeBytes = free,
+                        lastError = "存储空间不足，已暂停拍照",
+                    )
+                    cameraLock.withLock { unbindInternal() }
+                    t0 = 0L
+                    delay(60_000)
+                    continue
+                } else if (_status.value.storageLow) {
+                    _status.value = _status.value.copy(
+                        storageLow = false,
+                        freeBytes = free,
+                        // 只清掉存储告警，不要顺手抹掉相机错误
+                        lastError = _status.value.lastError
+                            ?.takeUnless { it.startsWith("存储空间不足") },
+                    )
+                }
+
                 val intervalMs = s.intervalSec * 1000L
                 if (intervalMs != lastInterval) {
+                    // 间隔变更后时刻表要重排，否则会沿用旧节奏
                     t0 = 0L
                     lastInterval = intervalMs
                 }
@@ -171,18 +241,31 @@ class CaptureController(
                 if (s.targetWidth != lastW || s.targetHeight != lastH) {
                     lastW = s.targetWidth
                     lastH = s.targetHeight
-                    if (imageCapture != null) unbindInternal()
+                    cameraLock.withLock {
+                        if (imageCapture != null) unbindInternal()
+                    }
                 }
 
                 // 首次绑定（此后持续占用，不在拍后解绑）
                 if (imageCapture == null) {
-                    owner?.let { bindInternal(it) }
+                    cameraLock.withLock {
+                        if (imageCapture == null) owner?.let { bindInternal(it) }
+                    }
                     if (imageCapture == null) {
                         _status.value = _status.value.copy(loopActive = false)
                         t0 = 0L
-                        delay(1000)
+                        // 相机被别的 App 占用时不要每秒硬试，退避到 30 秒
+                        bindFailures++
+                        delay((BIND_RETRY_MS shl (bindFailures - 1).coerceAtMost(4)).coerceAtMost(30_000L))
                         continue
                     }
+                    bindFailures = 0
+                }
+
+                // 相机已绑定、即将进入定时等待：角标应显示「延时中」，
+                // 不要停在「启动中」——首次/唤醒后到第一张之间会有一整个间隔的空窗
+                if (!_status.value.loopActive) {
+                    _status.value = _status.value.copy(loopActive = true)
                 }
 
                 if (t0 == 0L) {
@@ -224,7 +307,7 @@ class CaptureController(
                 if (!isActive) break
 
                 _status.value = _status.value.copy(loopActive = true)
-                val ok = shoot(s)
+                val ok = cameraLock.withLock { shoot(s) }
                 refreshCounts()
 
                 // 拍完后把时刻表推进到未来的拍次，避免补拍堆积
@@ -244,9 +327,11 @@ class CaptureController(
         }
     }
 
-
     private suspend fun shoot(s: AppSettings): Boolean {
-        val ic = imageCapture ?: return false
+        val ic = imageCapture ?: run {
+            _status.value = _status.value.copy(lastError = "相机未就绪")
+            return false
+        }
         _status.value = _status.value.copy(capturing = true)
         val file = store.newFile()
         val ok = if (s.watermarkEnabled && (s.watermarkText.isNotBlank() || s.watermarkShowTime)) {
@@ -254,14 +339,27 @@ class CaptureController(
         } else {
             shootPlain(ic, file)
         }
+        if (ok) {
+            try {
+                withContext(Dispatchers.IO) {
+                    store.ensureIndex()
+                    store.register(file)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                // 照片已经落盘，索引登记失败只影响本次统计，下次启动会重建
+                android.util.Log.w("LapseClock", "照片索引登记失败: ${t.message}")
+            }
+        } else {
+            // 失败的拍摄可能留下 0 字节文件，别让它混进索引/相册统计
+            file.delete()
+        }
         _status.value = _status.value.copy(
             capturing = false,
             lastShotAt = System.currentTimeMillis(),
             lastError = if (ok) null else _status.value.lastError,
         )
-        if (ok && s.autoCleanDays > 0) {
-            scope.launch { store.deleteOlderThan(s.autoCleanDays) }
-        }
         return ok
     }
 
@@ -343,22 +441,37 @@ class CaptureController(
             bmp = mutable
         }
 
-        Watermark.draw(bmp, s.watermarkText, s.watermarkShowTime)
-
-        file.outputStream().use { out ->
-            bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+        return try {
+            Watermark.draw(bmp, s.watermarkText, s.watermarkShowTime)
+            file.outputStream().use { out ->
+                bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+            }
+        } finally {
+            // 压缩/写盘抛异常时也要回收，否则整块 ARGB 位图会一直等到 GC
+            bmp.recycle()
         }
-        bmp.recycle()
-        return true
     }
 
+    /** 外部改动了照片目录（如合成后删除源照片）时，让角标立刻重新统计，不必等到下一次拍照 */
+    suspend fun refreshCountsNow() = refreshCounts()
+
     private suspend fun refreshCounts() {
-        // 目录扫描放到 IO 线程：拍照循环跑在 Main 上，不能在这里阻塞 UI
-        val counts = withContext(Dispatchers.IO) { store.counts() }
-        _status.value = _status.value.copy(
-            todayCount = counts.today,
-            totalCount = counts.total,
-        )
+        // 索引只在启动时扫一次目录，之后 counts() 是 O(1)；仍放 IO，避免首次建索引卡住主线程
+        try {
+            store.ensureIndex()
+            val counts = withContext(Dispatchers.IO) { store.counts() }
+            val free = store.freeBytes()
+            _status.value = _status.value.copy(
+                todayCount = counts.today,
+                totalCount = counts.total,
+                freeBytes = free,
+                storageLow = free < MIN_FREE_BYTES,
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            android.util.Log.w("LapseClock", "刷新照片统计失败: ${t.message}")
+        }
     }
 
     private suspend fun <T> awaitFuture(f: ListenableFuture<T>): T =
@@ -372,5 +485,11 @@ class CaptureController(
 
         /** 时刻表等待的分片长度：每段结束复查设置，保证休眠/暂停秒级生效 */
         private const val WAIT_SLICE_MS = 1000L
+
+        /** 相机绑定失败后的首次重试间隔，之后指数退避到 30 秒 */
+        private const val BIND_RETRY_MS = 2000L
+
+        /** 低于该剩余空间就停拍，避免把系统盘写爆 */
+        const val MIN_FREE_BYTES = 500L * 1024 * 1024
     }
 }

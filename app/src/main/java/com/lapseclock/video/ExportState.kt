@@ -17,7 +17,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
 
 sealed class ExportState {
@@ -27,7 +26,15 @@ sealed class ExportState {
         val progress: Float get() = if (total <= 0) 0f else done.toFloat() / total
     }
 
-    data class Done(val uri: Uri, val durationMs: Long, val frames: Int) : ExportState()
+    data class Done(
+        val uri: Uri,
+        val durationMs: Long,
+        val frames: Int,
+        /** 本次参与合成的日期，按时间升序；删除源照片时按这些日期删 */
+        val dates: List<LocalDate>,
+        /** 每日自动合成，而不是用户手动点开始 */
+        val auto: Boolean = false,
+    ) : ExportState()
 
     data class Failed(val message: String) : ExportState()
 
@@ -45,23 +52,49 @@ class ExportController(
     private var job: Job? = null
     private val cancelled = AtomicBoolean(false)
 
-    fun start(from: LocalDate, to: LocalDate, fps: Int, width: Int, height: Int) {
+    init {
+        // 进程被杀会留下没写完的 mp4，启动时清掉；只清理 10 分钟前的，避免撞上进行中的导出
+        scope.launch(Dispatchers.IO) {
+            val cutoff = System.currentTimeMillis() - 10 * 60_000L
+            File(app.cacheDir, "export").listFiles()
+                ?.filter { it.isFile && it.lastModified() < cutoff }
+                ?.forEach { runCatching { it.delete() } }
+        }
+    }
+
+    fun start(
+        dates: Collection<LocalDate>,
+        fps: Int,
+        width: Int,
+        height: Int,
+        auto: Boolean = false,
+    ) {
         if (job?.isActive == true) return
-        val files = store.filesBetweenInclusive(from, to)
-        if (files.isEmpty()) {
-            _state.value = ExportState.Failed("所选日期范围内没有照片")
+        val sortedDates = dates.distinct().sorted()
+        if (sortedDates.isEmpty()) {
+            _state.value = ExportState.Failed("没有选择日期")
             return
         }
         cancelled.set(false)
-        _state.value = ExportState.Running(0, files.size)
+        // 取帧列表放到 IO；选的天数越多越不能卡在主线程
+        _state.value = ExportState.Running(0, 0)
 
         job = scope.launch {
             var outFile: File? = null
             try {
+                val files = withContext(Dispatchers.IO) {
+                    store.ensureIndex()
+                    store.filesForDates(sortedDates)
+                }
+                if (files.isEmpty()) {
+                    _state.value = ExportState.Failed("所选日期下没有照片")
+                    return@launch
+                }
+                _state.value = ExportState.Running(0, files.size)
+
                 val frames = withContext(Dispatchers.IO) {
                     val dir = File(app.cacheDir, "export").apply { mkdirs() }
-                    val stamp = System.currentTimeMillis()
-                    val out = File(dir, "timelapse_$stamp.mp4")
+                    val out = File(dir, timelapseOutputName(sortedDates, fps))
                     outFile = out
                     val enc = TimelapseEncoder(
                         files = files,
@@ -84,7 +117,7 @@ class ExportController(
                 val out = outFile!!
                 val durationMs = withContext(Dispatchers.IO) { readDurationMs(out) }
                 val uri = withContext(Dispatchers.IO) { publish(out) }
-                _state.value = ExportState.Done(uri, durationMs, frames)
+                _state.value = ExportState.Done(uri, durationMs, frames, sortedDates, auto)
             } catch (t: Throwable) {
                 outFile?.delete()
                 _state.value = ExportState.Failed(t.message ?: t.toString())
@@ -97,9 +130,11 @@ class ExportController(
         if (job?.isActive != true) _state.value = ExportState.Idle
     }
 
+    /** 导出完成后重新回到可配置状态，让用户能换范围再合成一次 */
     fun reset() {
-        cancelled.set(true)
-        if (job?.isActive != true) _state.value = ExportState.Idle
+        if (job?.isActive == true) return
+        cancelled.set(false)
+        _state.value = ExportState.Idle
     }
 
     private fun readDurationMs(file: File): Long {
@@ -128,25 +163,33 @@ class ExportController(
                 Environment.DIRECTORY_MOVIES + "/Timelapse",
             )
             put(MediaStore.Video.Media.DATE_ADDED, now / 1000)
-            if (android.os.Build.VERSION.SDK_INT >= 31) {
-                put(MediaStore.Video.Media.DATE_TAKEN, now)
-            }
+            put(MediaStore.Video.Media.DATE_TAKEN, now)
+            // 写完再置 0，否则相册里会先出现一个播不了的半成品
+            put(MediaStore.Video.Media.IS_PENDING, 1)
         }
         return try {
             val resolver = app.contentResolver
             val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
                 ?: throw RuntimeException("MediaStore insert 返回 null")
-            resolver.openOutputStream(uri)?.use { os ->
-                file.inputStream().use { it.copyTo(os) }
-            } ?: throw RuntimeException("无法打开输出流")
-            file.delete()
-            uri
+            try {
+                resolver.openOutputStream(uri)?.use { os ->
+                    file.inputStream().use { it.copyTo(os) }
+                } ?: throw RuntimeException("无法打开输出流")
+                resolver.update(
+                    uri,
+                    ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) },
+                    null,
+                    null,
+                )
+                file.delete()
+                uri
+            } catch (t: Throwable) {
+                runCatching { resolver.delete(uri, null, null) }
+                throw t
+            }
         } catch (_: Throwable) {
             FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
         }
     }
 
-    companion object {
-        val NAME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
-    }
 }
