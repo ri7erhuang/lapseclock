@@ -37,7 +37,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lapseclock.calendar.dayInfoOf
@@ -207,36 +210,43 @@ private fun TimeHeader(
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        Column(modifier = Modifier.weight(0.9f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("今年已过", color = theme.dim, fontSize = 12.sp)
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    text = String.format(Locale.US, "%.1f", yearProgress * 100),
-                    color = theme.main,
-                    fontSize = 40.sp,
-                    fontWeight = FontWeight.Thin,
-                )
-                Text(
-                    text = "%",
-                    color = theme.main,
-                    fontSize = 15.sp,
-                    modifier = Modifier.padding(bottom = 7.dp),
-                )
+        // 左半（今年/本月/本周）与主区的点阵同宽，右半与「最近一张」同宽，上下两栏就对齐了
+        Row(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(0.9f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("今年已过", color = theme.dim, fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = String.format(Locale.US, "%.1f", yearProgress * 100),
+                        color = theme.main,
+                        fontSize = 40.sp,
+                        fontWeight = FontWeight.Thin,
+                    )
+                    Text(
+                        text = "%",
+                        color = theme.main,
+                        fontSize = 15.sp,
+                        modifier = Modifier.padding(bottom = 7.dp),
+                    )
+                }
+                Text("今年还剩 $daysLeft 天", color = theme.dim, fontSize = 12.sp)
             }
-            Text("今年还剩 $daysLeft 天", color = theme.dim, fontSize = 12.sp)
+
+            Column(
+                modifier = Modifier.weight(0.7f).padding(top = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ProgressBar("本月已过", monthProgress, theme)
+                ProgressBar("本周已过", weekProgress, theme)
+            }
+            // 两条进度条贴着年份数字站，别在中间拉出一大片空白
+            Spacer(Modifier.weight(0.45f))
         }
 
-        Column(
-            modifier = Modifier.weight(0.85f).padding(top = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            ProgressBar("本月已过", monthProgress, theme)
-            ProgressBar("本周已过", weekProgress, theme)
-        }
+        // 与主区两列同宽同间距：农历/节气块正好压在「最近一张」上方
+        Spacer(Modifier.width(26.dp))
 
-        Column(modifier = Modifier.weight(1.1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(modifier = Modifier.weight(0.4f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 text = "${dayInfo.lunarText} · ${now.format(WEEKDAY_FMT)}",
                 color = theme.main,
@@ -294,6 +304,12 @@ private fun YearPanel(
     theme: ClockTheme,
     modifier: Modifier = Modifier,
 ) {
+    val labelStyle = remember(theme) { TextStyle(fontSize = 10.sp, color = theme.dim.copy(alpha = 0.8f)) }
+    val measurer = rememberTextMeasurer()
+    // 月份标签先量好：宽度用来给点阵留位，行高跟点阵共用同一套几何，行才对得上
+    val labels = remember(labelStyle) { (1..12).map { measurer.measure("${it}月", labelStyle) } }
+    val labelWidth = labels.maxOf { it.size.width }.toFloat()
+
     Column(modifier = modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("一年", color = theme.dim, fontSize = 12.sp)
@@ -301,40 +317,45 @@ private fun YearPanel(
             Legend(theme)
         }
         Spacer(Modifier.height(6.dp))
-        Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            Column(modifier = Modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                for (month in 1..12) {
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                        Text("${month}月", color = theme.dim.copy(alpha = 0.8f), fontSize = 10.sp)
-                    }
-                }
+        val textGap = 8.dp
+        Canvas(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // 格子一律正方形（受宽高两边里更紧的一边限制），整块点阵在剩余空间里居中；
+            // 月份标签和格子用同一个 cell/originY 排版，所以永远对得上行
+            val labelW = labelWidth + textGap.toPx()
+            val cell = minOf((size.width - labelW) / 31f, size.height / 12f)
+            val originX = labelW + (size.width - labelW - cell * 31f) / 2f
+            val originY = (size.height - cell * 12f) / 2f
+            val gap = cell * 0.14f
+            val radius = CornerRadius(cell * 0.22f)
+
+            labels.forEachIndexed { i, layout ->
+                drawText(
+                    textLayoutResult = layout,
+                    topLeft = Offset(0f, originY + i * cell + (cell - layout.size.height) / 2f),
+                )
             }
-            Spacer(Modifier.width(8.dp))
-            Canvas(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                val gapX = 2.dp.toPx()
-                val gapY = 2.dp.toPx()
-                val cellW = size.width / 31f
-                val cellH = size.height / 12f
-                val radius = CornerRadius(minOf(cellW, cellH) * 0.28f)
-                for (month in 1..12) {
-                    val days = YearMonth.of(year, month).lengthOfMonth()
-                    for (day in 1..days) {
-                        val date = LocalDate.of(year, month, day)
-                        val color = when {
-                            date == today -> theme.lead
-                            date.isAfter(today) ->
-                                if (jieQi.containsKey(date)) theme.accent.copy(alpha = 0.35f)
-                                else theme.dim.copy(alpha = 0.14f)
-                            jieQi.containsKey(date) -> theme.accent.copy(alpha = 0.95f)
-                            else -> theme.accent.copy(alpha = 0.45f)
-                        }
-                        drawRoundRect(
-                            color = color,
-                            topLeft = Offset((day - 1) * cellW + gapX / 2f, (month - 1) * cellH + gapY / 2f),
-                            size = Size(cellW - gapX, cellH - gapY),
-                            cornerRadius = radius,
-                        )
+
+            for (month in 1..12) {
+                val days = YearMonth.of(year, month).lengthOfMonth()
+                for (day in 1..days) {
+                    val date = LocalDate.of(year, month, day)
+                    val color = when {
+                        date == today -> theme.lead
+                        date.isAfter(today) ->
+                            if (jieQi.containsKey(date)) theme.accent.copy(alpha = 0.35f)
+                            else theme.dim.copy(alpha = 0.14f)
+                        jieQi.containsKey(date) -> theme.accent.copy(alpha = 0.95f)
+                        else -> theme.accent.copy(alpha = 0.45f)
                     }
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(
+                            originX + (day - 1) * cell + gap / 2f,
+                            originY + (month - 1) * cell + gap / 2f,
+                        ),
+                        size = Size(cell - gap, cell - gap),
+                        cornerRadius = radius,
+                    )
                 }
             }
         }
