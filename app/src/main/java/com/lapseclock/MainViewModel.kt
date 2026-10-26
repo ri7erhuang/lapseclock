@@ -271,6 +271,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setThemeId(id: String) = viewModelScope.launch { repo.setThemeId(id) }
     fun setAutoExport(v: Boolean) = viewModelScope.launch { repo.setAutoExport(v) }
 
+    /** 每日一签被收下：记下日期，当天不再出现图标 */
+    fun markFortuneSeen() = viewModelScope.launch { repo.setLastFortuneDate(LocalDate.now().toString()) }
+
     /**
      * 合成结束后由用户在弹窗里确认，删除这些日期的源照片。
      * 只删用户明确选中的日期，不做任何"顺手清理"。

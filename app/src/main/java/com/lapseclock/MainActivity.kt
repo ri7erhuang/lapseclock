@@ -81,6 +81,7 @@ class MainActivity : ComponentActivity() {
                 onWakeUp = { vm.wakeUp() },
                 onTakeShot = { vm.captureNow() },
                 onCycleTheme = { vm.cycleTheme() },
+                onFortuneSeen = { vm.markFortuneSeen() },
                 onBack = { vm.screen.value = Screen.Clock },
                 onSetInterval = { vm.setInterval(it) },
                 onSetResolution = { w, h -> vm.setResolution(w, h) },

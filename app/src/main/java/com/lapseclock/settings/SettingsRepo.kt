@@ -40,6 +40,8 @@ data class AppSettings(
     val autoExport: Boolean = true,
     /** 最近一次成功自动合成的日期（yyyy-MM-dd），避免重复出片 */
     val lastAutoExportDate: String = "",
+    /** 最近一次点开「每日一签」的日期（yyyy-MM-dd），当天点过就不再显示图标 */
+    val lastFortuneDate: String = "",
 ) {
     val targetLabel: String get() = "${targetWidth}×${targetHeight}"
 }
@@ -64,6 +66,7 @@ class SettingsRepo(private val context: Context) {
         val THEME_ID = stringPreferencesKey("theme_id")
         val AUTO_EXPORT = booleanPreferencesKey("auto_export")
         val LAST_AUTO_EXPORT = stringPreferencesKey("last_auto_export_date")
+        val LAST_FORTUNE = stringPreferencesKey("last_fortune_date")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data
@@ -90,6 +93,7 @@ class SettingsRepo(private val context: Context) {
                 themeId = p[Keys.THEME_ID] ?: com.lapseclock.ui.theme.Themes.AUTO,
                 autoExport = p[Keys.AUTO_EXPORT] ?: true,
                 lastAutoExportDate = p[Keys.LAST_AUTO_EXPORT] ?: "",
+                lastFortuneDate = p[Keys.LAST_FORTUNE] ?: "",
             )
         }
 
@@ -111,6 +115,7 @@ class SettingsRepo(private val context: Context) {
     suspend fun setSnoozeNight(night: String) = context.dataStore.edit { it[Keys.SNOOZE_NIGHT] = night }
     suspend fun setThemeId(id: String) = context.dataStore.edit { it[Keys.THEME_ID] = id }
     suspend fun setAutoExport(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_EXPORT] = v }
+    suspend fun setLastFortuneDate(date: String) = context.dataStore.edit { it[Keys.LAST_FORTUNE] = date }
     suspend fun setLastAutoExportDate(date: String) =
         context.dataStore.edit { it[Keys.LAST_AUTO_EXPORT] = date }
 }

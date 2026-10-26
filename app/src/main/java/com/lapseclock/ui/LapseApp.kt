@@ -14,12 +14,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.lapseclock.GoldUi
 import com.lapseclock.Screen
+import com.lapseclock.calendar.dayInfoOf
 import com.lapseclock.capture.CaptureStatus
 import com.lapseclock.capture.PhotoStore
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.video.ExportState
 import com.lapseclock.weather.WeatherUi
+import com.lapseclock.ui.theme.resolveClockTheme
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 @Composable
 fun LapseApp(
@@ -37,6 +40,7 @@ fun LapseApp(
     onWakeUp: () -> Unit,
     onTakeShot: () -> Unit,
     onCycleTheme: () -> Unit,
+    onFortuneSeen: () -> Unit,
     onBack: () -> Unit,
     onSetInterval: (Int) -> Unit,
     onSetResolution: (Int, Int) -> Unit,
@@ -59,6 +63,19 @@ fun LapseApp(
 ) {
     // 第二屏只是时钟的一个「页」，不进 Screen 枚举——它不改变 App 的导航状态
     var infoOpen by remember { mutableStateOf(false) }
+
+    // 番茄钟：状态挂在这一层，右滑回主页后计时继续走
+    val pomodoro = rememberPomodoro()
+    var pomodoroOpen by remember { mutableStateOf(false) }
+    val clockTheme = remember(settings.themeId, weather?.text) {
+        val now = LocalDateTime.now()
+        resolveClockTheme(
+            settings.themeId,
+            now,
+            weather?.text,
+            dayInfoOf(now.toLocalDate()).specialText,
+        )
+    }
     LaunchedEffect(screen) {
         if (screen != Screen.Clock) infoOpen = false
     }
@@ -86,6 +103,10 @@ fun LapseApp(
                 onWakeUp = onWakeUp,
                 onCycleTheme = onCycleTheme,
                 onSwipeLeft = { infoOpen = true },
+                onSwipeDown = { pomodoroOpen = true },
+                onFortuneSeen = onFortuneSeen,
+                // 专注进行中时在主页底部留一行，回来只看时间也知道还剩多久
+                pomodoroText = if (pomodoro.running) "${pomodoro.label} ${pomodoro.clockText}" else null,
                 weather = weather,
                 gold = gold,
             )
@@ -98,6 +119,14 @@ fun LapseApp(
                 status = status,
                 weather = weather,
                 onBack = { infoOpen = false },
+            )
+        }
+
+        if (pomodoroOpen) {
+            PomodoroScreen(
+                pomodoro = pomodoro,
+                theme = clockTheme,
+                onDismiss = { pomodoroOpen = false },
             )
         }
 

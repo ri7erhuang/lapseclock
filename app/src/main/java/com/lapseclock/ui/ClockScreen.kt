@@ -2,7 +2,9 @@ package com.lapseclock.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import com.lapseclock.GoldUi
 import com.lapseclock.calendar.dayInfoOf
 import com.lapseclock.capture.CaptureStatus
+import com.lapseclock.fortune.fortuneOf
 import com.lapseclock.isSleeping
 import com.lapseclock.settings.AppSettings
 import com.lapseclock.ui.theme.ClockTheme
@@ -135,6 +138,10 @@ fun ClockScreen(
     onWakeUp: () -> Unit,
     onCycleTheme: () -> Unit,
     onSwipeLeft: () -> Unit,
+    onSwipeDown: () -> Unit,
+    onFortuneSeen: () -> Unit,
+    /** 番茄钟运行时的提示文字（如「专注 24:12」），空闲时为 null */
+    pomodoroText: String?,
     weather: WeatherUi?,
     gold: GoldUi?,
     modifier: Modifier = Modifier,
@@ -178,6 +185,8 @@ fun ClockScreen(
         delay(10_000)
         controlsVisible = false
     }
+
+    var showFortune by remember { mutableStateOf(false) }
 
     // 切皮肤后短暂显示名字，否则用户不知道双击切到了哪一套
     var themeToast by remember { mutableStateOf<String?>(null) }
@@ -230,16 +239,26 @@ fun ClockScreen(
                 )
             }
             .pointerInput(sleeping) {
+                // 横向和纵向共用一个 drag 检测器，按主轴判定：
+                // 两个 detectXxxDragGestures 并行会互相抢事件，实际只会有一个生效
                 val threshold = 70.dp.toPx()
-                var accumulated = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = { accumulated = 0f },
+                var dx = 0f
+                var dy = 0f
+                detectDragGestures(
+                    onDragStart = { dx = 0f; dy = 0f },
                     onDragEnd = {
-                        if (!sleeping && accumulated < -threshold) onSwipeLeft()
-                        accumulated = 0f
+                        if (!sleeping) {
+                            if (kotlin.math.abs(dx) >= kotlin.math.abs(dy)) {
+                                if (dx < -threshold) onSwipeLeft()
+                            } else if (dy > threshold) {
+                                onSwipeDown()
+                            }
+                        }
+                        dx = 0f
+                        dy = 0f
                     },
-                    onDragCancel = { accumulated = 0f },
-                ) { _, dragAmount -> accumulated += dragAmount }
+                    onDragCancel = { dx = 0f; dy = 0f },
+                ) { _, drag -> dx += drag.x; dy += drag.y }
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -270,6 +289,18 @@ fun ClockScreen(
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
 
+            pomodoroText?.let {
+                Text(
+                    text = it,
+                    color = theme.lead.copy(alpha = 0.9f),
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 44.dp),
+                )
+            }
+
             themeToast?.let {
                 Text(
                     text = it,
@@ -288,6 +319,20 @@ fun ClockScreen(
                         gold = gold,
                         mainColor = mainColor,
                         modifier = Modifier.align(Alignment.TopStart),
+                    )
+                }
+
+                // 每日一签：当天还没收下才出现。不是手势，是一个常驻的小印章
+                if (settings.lastFortuneDate != now.toLocalDate().toString()) {
+                    FortuneBadge(
+                        theme = theme,
+                        onClick = { showFortune = true },
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(
+                                start = 12.dp,
+                                top = if (weather != null || gold != null) 52.dp else 12.dp,
+                            ),
                     )
                 }
 
@@ -337,6 +382,17 @@ fun ClockScreen(
 
             if (permissionNeeded) {
                 PermissionCard(theme, onRequestPermission)
+            }
+
+            if (showFortune) {
+                FortuneDialog(
+                    fortune = fortuneOf(now.toLocalDate()),
+                    theme = theme,
+                    onConfirm = {
+                        showFortune = false
+                        onFortuneSeen()
+                    },
+                )
             }
         }
     }
@@ -626,5 +682,29 @@ private fun PermissionCard(theme: ClockTheme, onRequestPermission: () -> Unit) {
                 Text(text = "授予权限", color = Color.White)
             }
         }
+    }
+}
+
+/** 主页上的「签」印章：一个小方块，点开就是今天的签 */
+@Composable
+private fun FortuneBadge(
+    theme: ClockTheme,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(32.dp)
+            .background(theme.accent.copy(alpha = 0.12f), RoundedCornerShape(9.dp))
+            .border(1.dp, theme.accent.copy(alpha = 0.4f), RoundedCornerShape(9.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "签",
+            color = theme.accent,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
